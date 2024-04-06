@@ -10,9 +10,9 @@ import shutil
 import smplx
 from omegaconf import OmegaConf
 
-from llib.defaults.main import config as default_config, merge as merge_configs
-from llib.bodymodels.build import build_bodymodel
-from llib.visualization.scripts.tools import (
+from llib_rho.defaults.main import config as default_config, merge as merge_configs
+from llib_rho.bodymodels.build import build_bodymodel
+from llib_rho.visualization.scripts.tools import (
     move_to,
     render_camera_view,
     render_top_view,

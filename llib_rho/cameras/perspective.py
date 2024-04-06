@@ -5,8 +5,6 @@ from typing import Optional
 from pytorch3d.renderer import PerspectiveCameras
 from pytorch3d.transforms import euler_angles_to_matrix
 
-
-
 class PerspectiveCamera(nn.Module):
 
     DEFAULT_AFOV = 60

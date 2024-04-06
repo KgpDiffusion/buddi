@@ -115,8 +115,8 @@ class BUDDI(nn.Module):
         mlp_dim,
         dropout=0.0, 
         embed_guidance_config = {
-            'orient_bev_h0': 6, 'pose_bev_h0': 126, 'shape_bev_h0': 10, 'transl_bev_h0': 3,
-            'orient_init_obj': 6, 'transl_init_obj': 3, 'enc_obj': 1024, 'cat_obj': 30, # 20+ 10(intercap)
+            'orient_h0': 6, 'pose_h0': 126, 'shape_h0': 10, 'transl_h0': 3,
+            'orient_obj': 6, 'transl_obj': 3, 'enc_obj': 1024, 'cat_obj': 30, # 20+ 10(intercap)
         },
         embed_target_config = {
             'orient_h0': 6, 'pose_h0': 126, 'shape_h0': 11, 'transl_h0': 3,

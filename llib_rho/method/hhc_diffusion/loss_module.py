@@ -36,10 +36,6 @@ class LossModule(nn.Module):
 
         self.set_weights(stage=0) # init weights with first stage
 
-        # build contact loss criterion for heatmap computation
-        function = build_loss(self.cfg.hhc_contact, body_model_type)
-        setattr(self, 'hhc_contact_module', function)
-
     def set_weights(self, stage, default_stage=-1):
 
         for name, cfg in self.cfg.items():
@@ -103,154 +99,91 @@ class LossModule(nn.Module):
             init_transl, est_transl) * self.pseudogt_transl_weight
         return pgt_transl_loss
 
-    def get_hhc_contact_loss(self, contact_map, vertices_h1, vertices_h2): 
-        loss = self.hhc_contact_crit(v1=vertices_h1, v2=vertices_h2, 
-                cmap=contact_map, factor=100) 
-        loss = loss.mean() * self.hhc_contact_weight
-        return loss
-
-    def get_cmap_loss(self, tar_contact_map_binary, est_contact_map): 
-        raise NotImplementedError
-
-    def get_cmap_heat_token_loss(self, tar_cmap_heat, est_cmap_token):
-        raise NotImplementedError
-
-    def get_cmap_heat_smpl_loss(self, tar_cmap_heat, est_vertices_h1, est_vertices_h2):
-        raise NotImplementedError
-
-    def get_cmap_binary_token_loss(self, tar_cmap_binary, est_cmap_token):
-        raise NotImplementedError
-
-    def get_cmap_binary_smpl_loss(self, tar_cmap_binary, est_vertices_h1, est_vertices_h2):
-        raise NotImplementedError
-
-    def get_hhc_contact_general_loss(self, vertices_h1, vertices_h2):
-        raise NotImplementedError
-
-    def get_ground_plane_loss(self, vertices):
-        raise NotImplementedError
-
     def zero_loss_dict(self):
         ld = {} 
-        ld['shape_prior_loss_0'] = 0.0
-        ld['shape_prior_loss_1'] = 0.0
-        ld['pose_prior_loss_0'] = 0.0
-        ld['pose_prior_loss_1'] = 0.0
+        # ld['shape_prior_loss_0'] = 0.0
+        # ld['shape_prior_loss_1'] = 0.0
+        # ld['pose_prior_loss_0'] = 0.0
+        # ld['pose_prior_loss_1'] = 0.0
         ld['pseudogt_pose_losses_0'] = 0.0
-        ld['pseudogt_pose_losses_1'] = 0.0
         ld['pseudogt_global_orient_losses_0'] = 0.0
-        ld['pseudogt_global_orient_losses_1'] = 0.0
         ld['pseudogt_shape_losses_0'] = 0.0
-        ld['pseudogt_shape_losses_1'] = 0.0
         ld['pseudogt_scale_losses_0'] = 0.0
-        ld['pseudogt_scale_losses_1'] = 0.0
         ld['pseudogt_transl_losses_0'] = 0.0
-        ld['pseudogt_transl_losses_1'] = 0.0
         ld['pseudogt_v2v_losses_0'] = 0.0
-        ld['pseudogt_v2v_losses_1'] = 0.0
         ld['pseudogt_j2j_losses_0'] = 0.0
-        ld['pseudogt_j2j_losses_1'] = 0.0
-        ld['hhc_contact_loss'] = 0.0
-        ld['cmap_loss'] = 0.0
-        ld['cmap_heat_smpl_loss'] = 0.0
-        ld['cmap_heat_token_loss'] = 0.0
-        ld['cmap_binary_smpl_loss'] = 0.0
-        ld['cmap_binary_token_loss'] = 0.0
-        ld['hhc_contact_general_loss'] = 0.0
+        ld['pseudogt_obj_pose_losses'] = 0.0
+        ld['pseudogt_obj_transl_losses'] = 0.0
+        
         return ld
 
     def forward(
         self, 
         est_smpl, # estimated smpl
         tar_smpl, # target smpl
-        est_contact_map=None,
-        tar_contact_map=None,
-        tar_contact_map_binary=None,
-
+        est_params, # estimated parameters
+        tar_params, # target parameters
     ):  
 
-        bs, num_joints, _ = est_smpl[0].joints.shape
-        device = est_smpl[0].joints.device
+        bs, num_joints, _ = est_smpl.joints.shape
+        device = est_smpl.joints.device
 
         ld = self.zero_loss_dict() # store losses in dict
 
-        # contact loss between two humans
-        if self.hhc_contact_weight:
-            ld['hhc_contact_loss'] += self.get_hhc_contact_loss(
-                tar_contact_map_binary, est_smpl[0].vertices, est_smpl[1].vertices)
 
-        # predicted contact map loss
-        if self.cmap_weight:
-            ld['cmap_loss'] += self.get_cmap_loss(
-                tar_contact_map_binary, est_contact_map)        
+        # human zero loss
+        hidx=0
+        h = f'_{hidx}'
+        tar_smpl, est_smpl = [tar_smpl], [est_smpl]
+        # # shape prior loss
+        # if self.shape_prior_weight > 0:
+        #     ld['shape_prior_loss'+h] += self.get_shape_prior_loss(
+        #         est_smpl[hidx].betas)
 
-        # free contact loss between two humans (e.g. to resolve intersections)
-        if self.hhc_contact_general_weight:
-            ld['hhc_contact_general_loss'] += self.get_hhc_contact_general_loss(
-                est_smpl[0].vertices, est_smpl[1].vertices)
-
-        # ToDo: ADD NEW LOSSES
-        if self.cmap_heat_token_weight:
-            ld['cmap_heat_token_loss'] += self.get_cmap_heat_token_loss(
-                tar_contact_map, est_contact_map)
+        # # pose prior loss
+        # if self.pose_prior_weight > 0:
+        #     ld['pose_prior_loss'+h] += self.get_pose_prior_loss(
+        #         est_smpl[hidx].body_pose, est_smpl[hidx].betas)
         
-        if self.cmap_heat_smpl_weight:
-            ld['cmap_heat_smpl_loss'] += self.get_cmap_heat_smpl_loss(
-                tar_contact_map, est_smpl[0].vertices, est_smpl[1].vertices)
+        # pose prior losses for each human
+        if self.pseudogt_pose_weight > 0:
+            ld['pseudogt_pose_losses'+h] += self.get_pseudogt_pose_loss(
+                tar_smpl[hidx].body_pose, est_smpl[hidx].body_pose, device)
+            ld['pseudogt_global_orient_losses'+h] += self.get_pseudogt_pose_loss(
+                tar_smpl[hidx].global_orient, est_smpl[hidx].global_orient, device)
+
+        # pose prior losses for each human
+        if self.pseudogt_shape_weight > 0:
+            # concat scale and betas
+            ld['pseudogt_shape_losses'+h] += self.get_pseudogt_shape_loss(
+                tar_smpl[hidx].betas, est_smpl[hidx].betas, device)
+            ld['pseudogt_scale_losses'+h] += ((tar_smpl[hidx].scale - est_smpl[hidx].scale) ** 2) * \
+                self.pseudogt_shape_weight
+
+        # pose prior losses for each human
+        if self.pseudogt_transl_weight > 0:
+            ld['pseudogt_transl_losses'+h] += self.get_pseudogt_transl_loss(
+                tar_smpl[hidx].transl, est_smpl[hidx].transl, device)
+
+        # vertex to vertex losses for each human
+        if self.pseudogt_v2v_weight > 0:
+            ld['pseudogt_v2v_losses'+h] += self.get_pseudogt_v2v_loss(
+                tar_smpl[hidx].vertices, est_smpl[hidx].vertices, device)
         
-        if self.cmap_binary_token_weight:
-            ld['cmap_binary_token_loss'] += self.get_cmap_binary_token_loss(
-                tar_contact_map_binary, est_contact_map)
-
-        if self.cmap_binary_smpl_weight:
-            ld['cmap_binary_smpl_loss'] += self.get_cmap_binary_smpl_loss(
-                tar_contact_map_binary, est_smpl[0].vertices, est_smpl[1].vertices)
-
-
-
-        # per human losses
-        for hidx in range(len(est_smpl)):
-            h = f'_{hidx}'
-
-            # shape prior loss
-            if self.shape_prior_weight > 0:
-                ld['shape_prior_loss'+h] += self.get_shape_prior_loss(
-                    est_smpl[hidx].betas)
-
-            # pose prior loss
-            if self.pose_prior_weight > 0:
-                ld['pose_prior_loss'+h] += self.get_pose_prior_loss(
-                    est_smpl[hidx].body_pose, est_smpl[hidx].betas)
-           
-            # pose prior losses for each human
-            if self.pseudogt_pose_weight > 0:
-                ld['pseudogt_pose_losses'+h] += self.get_pseudogt_pose_loss(
-                    tar_smpl[hidx].body_pose, est_smpl[hidx].body_pose, device)
-                ld['pseudogt_global_orient_losses'+h] += self.get_pseudogt_pose_loss(
-                    tar_smpl[hidx].global_orient, est_smpl[hidx].global_orient, device)
-
-            # pose prior losses for each human
-            if self.pseudogt_shape_weight > 0:
-                # concat scale and betas
-                ld['pseudogt_shape_losses'+h] += self.get_pseudogt_shape_loss(
-                    tar_smpl[hidx].betas, est_smpl[hidx].betas, device)
-                ld['pseudogt_scale_losses'+h] += ((tar_smpl[hidx].scale - est_smpl[hidx].scale) ** 2) * \
-                    self.pseudogt_shape_weight
-
-            # pose prior losses for each human
-            if self.pseudogt_transl_weight > 0:
-                ld['pseudogt_transl_losses'+h] += self.get_pseudogt_transl_loss(
-                    tar_smpl[hidx].transl, est_smpl[hidx].transl, device)
-
-            # vertex to vertex losses for each human
-            if self.pseudogt_v2v_weight > 0:
-                ld['pseudogt_v2v_losses'+h] += self.get_pseudogt_v2v_loss(
-                    tar_smpl[hidx].vertices, est_smpl[hidx].vertices, device)
+        # joint to joint losses for each human
+        if self.pseudogt_j2j_weight > 0:
+            ld['pseudogt_j2j_losses'+h] += self.get_pseudogt_j2j_loss(
+                tar_smpl[hidx].joints, est_smpl[hidx].joints, device)
             
-            # joint to joint losses for each human
-            if self.pseudogt_j2j_weight > 0:
-                ld['pseudogt_j2j_losses'+h] += self.get_pseudogt_j2j_loss(
-                    tar_smpl[hidx].joints, est_smpl[hidx].joints, device)
+        #Object rotation loss
+        if self.pseudogt_obj_pose_weight > 0:
+            ld['pseudogt_obj_pose_losses'] += self.get_pseudogt_pose_loss(
+                tar_params['orient_obj'], est_params['orient_obj'], device)
+            
+        # Object Translation loss
+        if self.pseudogt_obj_transl_weight > 0:
+            ld['pseudogt_obj_transl_losses'] += self.get_pseudogt_transl_loss(
+                tar_params['transl_obj'], est_params['transl_obj'], device)
 
         # average the losses over batch
         ld_out = {}

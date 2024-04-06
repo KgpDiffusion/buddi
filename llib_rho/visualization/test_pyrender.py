@@ -5,8 +5,8 @@ import torch
 import smplx
 import imageio
 
-from llib.cameras.perspective import PerspectiveCamera
-from llib.visualization.pyrenderer import PyRenderer
+from llib_rho.cameras.perspective import PerspectiveCamera
+from llib_rho.visualization.pyrenderer import PyRenderer
 
 
 def render_two_meshes(renderer, vertices, faces):

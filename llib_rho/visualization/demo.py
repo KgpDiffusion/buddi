@@ -3,9 +3,9 @@ import torch
 import smplx
 import cv2 
 
-from llib.visualization.renderer import Pytorch3dRenderer
-from llib.visualization.texturer import Texturer
-from llib.cameras.perspective import PerspectiveCamera
+from llib_rho.visualization.renderer import Pytorch3dRenderer
+from llib_rho.visualization.texturer import Texturer
+from llib_rho.cameras.perspective import PerspectiveCamera
 
 def render_two_meshes(
         renderer, 

@@ -15,7 +15,7 @@ training:
 datasets:
   train_names: ['chi3d', 'hi4d','flickrci3ds']
   train_composition: [0.2, 0.2, 0.6]
-  val_names: ['hi4d', 'chi3d', 'flickrci3ds']
+  val_names: ['hi4d', 'chi3d', 'flickrci3ds'] # Hi4D not working yet
   flickrci3ds:
     processed_data_folder: datasets/processed/FlickrCI3D_Signatures
     pseudogt_folder: hhcs_opti/run4_20231015/results
@@ -23,12 +23,10 @@ datasets:
     original_data_folder: datasets/original/CHI3D
     processed_data_folder: datasets/processed/CHI3D
     load_single_camera: false
-    load_unit_glob_and_transl: false
   hi4d:
     original_data_folder: datasets/original/Hi4D
     processed_data_folder: datasets/processed/Hi4D
     load_single_camera: false
-    load_unit_glob_and_transl: false
   augmentation:
     use: false
   processing:
@@ -72,10 +70,10 @@ model:
       smpl_mask: []
       relative_transl: true
       relative_orient: false
-      guidance_params: []
+      guidance_params: ['bev']
       guidance_param_nc: 0.5
-      guidance_all_nc: 0.1
-      guidance_no_nc: 0.8
+      guidance_all_nc: 0.2
+      guidance_no_nc: 0.7
     losses:
       pseudogt_pose:
         type: l2
@@ -107,7 +105,7 @@ model:
         d1_aggregation: sum
 body_model:
   type: smplx
-  smpl_family_folder: essentials/body_models # smplx original weights
+  smpl_family_folder: essentials/body_models
   smplx:
     num_vertices: 10475
     init:

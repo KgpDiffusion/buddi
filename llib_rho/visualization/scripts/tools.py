@@ -1,8 +1,8 @@
 import numpy as np
 import torch
 from tqdm import tqdm
-from llib.cameras.perspective import PerspectiveCamera
-from llib.visualization.pyrenderer import PyRenderer, make_rotation, make_4x4_pose
+from llib_rho.cameras.perspective import PerspectiveCamera
+from llib_rho.visualization.pyrenderer import PyRenderer, make_rotation, make_4x4_pose
 
 
 def build_camera(width, height, afov_horizontal):

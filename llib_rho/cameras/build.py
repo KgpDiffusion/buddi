@@ -1,5 +1,5 @@
 import torch
-from llib.cameras.perspective import PerspectiveCamera
+from llib_rho.cameras.perspective import PerspectiveCamera
 
 
 def build_camera(
