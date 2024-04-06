@@ -72,6 +72,7 @@ def train(cfg):
     diffusion = build_diffusion(**cfg.model.diffusion)
 
     # load body models for human1 and human2
+    # TODO: ag6 and Shubh - why 11th dim passed to SMPLX?
     body_model = build_bodymodel(
         cfg=cfg.body_model, 
         batch_size=cfg.batch_size, 

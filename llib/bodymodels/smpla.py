@@ -58,6 +58,7 @@ class SMPLXA(SMPLX):
         
         global_orient = global_orient if global_orient is not None else self.global_orient
 
+        # Figure out why smpla is passed to super SMPLX
         body = super(SMPLXA, self).forward(
             betas=betas_smpla, 
             transl=transl,
