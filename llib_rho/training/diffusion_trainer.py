@@ -201,7 +201,7 @@ class Trainer(nn.Module):
         data_loader = DataLoader(
             self.train_module.train_ds,
             batch_size=self.batch_size,
-            shuffle=False, # suffling is done in data class
+            shuffle=True, # suffling is done in data class
             num_workers=self.train_cfg.num_workers,
             pin_memory=self.train_cfg.pin_memory,
             drop_last=False, # was false for bs 64

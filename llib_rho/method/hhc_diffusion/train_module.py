@@ -181,7 +181,7 @@ class TrainModule(nn.Module):
             param = param
         if rotrep == "sixd":
             param = param.view(self.bs, 1, -1, 3)
-            param = axis_angle_to_rotation6d(param).view(self.bs, 1, -1)
+            param = axis_angle_to_rotation6d(param).view(self.bs, 1, -1) # B, 1, 126 
         else:
             raise ValueError("Invalid rotation representation.")
 
@@ -257,7 +257,7 @@ class TrainModule(nn.Module):
         # unpack pose params
         if self.exp_cfg.rotrep == "sixd":
             bs = pose.shape[0]  # use curernt batch size in case of partial batch
-            orient = rotation6d_to_axis_angle(orient)
+            orient = rotation6d_to_axis_angle(orient)  # bs, 1, 3
             pose = rotation6d_to_axis_angle(pose.view(bs, self.nh, -1, 6)).view(
                 bs, self.nh, -1
             )
@@ -402,8 +402,8 @@ class TrainModule(nn.Module):
             self.exp_cfg.relative_transl
         )  # absolute or relative translation
 
-        concat_orient = torch.stack((params['orient'],params['orient_obj']), dim=1) # expected shape (B,2,3)
-        concat_transl = torch.stack((params['transl'],params['transl_obj']), dim=1) # expected shape (B,2,3)
+        concat_orient = torch.concat((params['orient'],params['orient_obj']), dim=1) # expected shape (B,2,3)
+        concat_transl = torch.concat((params['transl'],params['transl_obj']), dim=1) # expected shape (B,2,3)
         orient, cam_rotation = self.prep_global_orient(
             concat_orient, rotrep, relative=relative_orient
         )
@@ -418,7 +418,7 @@ class TrainModule(nn.Module):
             )
             if cam_rotation is not None
             else None
-        )
+        )  # B, 1, N_j, 3
         transl = self.prep_translation(
             concat_transl,
             relative=relative_transl,
@@ -432,8 +432,8 @@ class TrainModule(nn.Module):
         transl_obj = transl[:, [1], :]
 
         # update params with new values
-        new_values = {"orient": orient[:,[0],:], "pose": pose, 
-                      "transl": transl[:,[0],:], "orient_obj": orient_obj, 
+        new_values = {"orient": orient[:, [0], :], "pose": pose, 
+                      "transl": transl[:, [0], :], "orient_obj": orient_obj, 
                       "transl_obj": transl_obj}
         
         params.update(new_values)
@@ -508,11 +508,14 @@ class TrainModule(nn.Module):
         If keep_dim=True, the output will be [BS, 1, D] for each human.
         """
         out = {}
-        for pp in self.human_params:
-            for ii in range(self.nh):
-                v = x[pp]
-                value = v[:, ii] if not keep_dim else v[:, [ii]]
-                out.update({f"{pp}_h{ii}": value})
+        for pp in x.keys():
+            v = x[pp]
+            if pp in self.human_params:
+                for ii in range(self.nh):
+                    value = v[:, ii] if not keep_dim else v[:, [ii]]
+                    out.update({f"{pp}_h{ii}": value})
+            else:
+                out.update({pp: value[:, 0] if not keep_dim else value[:, [0]]})
         return out
 
     def concat_humans(self, x):

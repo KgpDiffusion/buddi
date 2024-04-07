@@ -7,8 +7,7 @@ from dataclasses import dataclass
     
 @dataclass
 class Behave:
-    original_data_folder: str = 'datasets/original/behave'
-    processed_data_folder: str = 'datasets/processed/behave'
+    data_folder: str = 'datasets/original/behave'
     image_folder: str = 'images'
     bev_folder: str = 'bev'
     openpose_folder: str = 'keypoints/keypoints'

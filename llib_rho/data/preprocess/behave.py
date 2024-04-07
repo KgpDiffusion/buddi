@@ -10,10 +10,10 @@ import pickle
 import trimesh
 from tqdm import tqdm
 
-from llib.cameras.perspective import PerspectiveCamera
-from llib.bodymodels.utils import smpl_to_openpose
+from llib_rho.cameras.perspective import PerspectiveCamera
+from llib_rho.bodymodels.utils import smpl_to_openpose
 from loguru import logger as guru
-from llib.data.preprocess.utils.shape_converter import ShapeConverter
+from llib_rho.data.preprocess.utils.shape_converter import ShapeConverter
 
 KEYPOINT_COST_TRHESHOLD = 0.008
 
@@ -74,7 +74,7 @@ class Behave():
             'bev_smpl_global_orient': smpl_global_orient,
             'bev_smpl_body_pose': smpl_body_pose,
             'bev_smpl_betas': smpl_betas,
-            'bev_smplx_betas': smplx_betas,
+            'bev_betas': smplx_betas.float().unsqueeze(0),
             'bev_cam_trans': cam_trans,
             'bev_smpl_joints': smpl_joints,
             'bev_smpl_vertices': smpl_vertices,
@@ -88,7 +88,7 @@ class Behave():
         if self.body_model_type == 'smplx':
             body_pose = data['bev_smpl_body_pose'][:63]
             global_orient = data['bev_smpl_global_orient']
-            betas = data['bev_smplx_betas']
+            betas = data['bev_betas']
 
         
         bev_cam_trans = torch.from_numpy(data['bev_cam_trans'])
@@ -108,18 +108,18 @@ class Behave():
         data['bev_smpl_vertices_root_trans'] = bev_vertices_root_trans
         
         smplx_update = {
-            'bev_smplx_global_orient': [],
-            'bev_smplx_body_pose': [],
-            'bev_smplx_transl': [],
-            'bev_smplx_keypoints': [],
-            'bev_smplx_vertices': [],
+            'bev_global_orient': [],  # 1, 3
+            'bev_body_pose': [],  # 1, 63
+            'bev_transl': [],  # 1, 3
+            'bev_keypoints': [],
+            'bev_vertices': [], # 1, 10475, 3
         }
 
-        h_global_orient = torch.from_numpy(global_orient).float().unsqueeze(0)
-        smplx_update['bev_smplx_global_orient'].append(h_global_orient)
+        h_global_orient = torch.from_numpy(global_orient).float().unsqueeze(0) # 1, 3
+        smplx_update['bev_global_orient'].append(h_global_orient)
         
-        h_body_pose = torch.from_numpy(body_pose).float().unsqueeze(0)
-        smplx_update['bev_smplx_body_pose'].append(h_body_pose)
+        h_body_pose = torch.from_numpy(body_pose).float().unsqueeze(0)  # 1, 63
+        smplx_update['bev_body_pose'].append(h_body_pose)
 
         h_betas = torch.from_numpy(
             betas
@@ -133,7 +133,7 @@ class Behave():
 
         root_trans = body.joints.detach()[:,0,:]
         transl = -root_trans.to('cpu') + bev_cam_trans.to('cpu')
-        smplx_update['bev_smplx_transl'].append(transl)
+        smplx_update['bev_transl'].append(transl)
 
         body = self.body_model(
             global_orient=h_global_orient,
@@ -143,10 +143,10 @@ class Behave():
         )
 
         keypoints = bev_camera.project(body.joints.detach())
-        smplx_update['bev_smplx_keypoints'].append(keypoints.detach())
+        smplx_update['bev_keypoints'].append(keypoints.detach())
 
         vertices = body.vertices.detach().to('cpu')
-        smplx_update['bev_smplx_vertices'].append(vertices)
+        smplx_update['bev_vertices'].append(vertices)
 
         for k, v in smplx_update.items():
             smplx_update[k] = torch.cat(v, dim=0)
@@ -206,7 +206,7 @@ class Behave():
         contour = np.array(kpts['face_keypoints_2d'],
             dtype=np.float32).reshape([-1, 3])[:17, :]
         # final openpose
-        op_kpts = np.concatenate([body, face, contour], axis=0)
+        op_kpts = np.expand_dims(np.concatenate([body, face, contour], axis=0), axis=0)  # 1, 135, 3
 
         # process Vitpose keypoints
         kpts = vitpose_data[human_idx]
@@ -220,18 +220,18 @@ class Behave():
         contour = np.array(kpts['face_keypoints_2d'],
             dtype=np.float32).reshape([-1, 3])[:17, :]
         # final openpose
-        vitpose_kpts = np.concatenate([body, face, contour], axis=0)
+        vitpose_kpts = np.expand_dims(np.concatenate([body, face, contour], axis=0), axis=0)  # 1, 135, 3
 
         human_data['vitpose'] = vitpose_kpts
         human_data['openpose'] = op_kpts
         for k, v in human_data.items():
 
-            if k in [
-                'bev_smplx_global_orient', 'bev_smplx_body_pose', 'bev_smplx_transl', 
-                'bev_smplx_keypoints', 'bev_smplx_vertices'
-            ]:
-                v = v[0]
-            human_data[k] = np.array(v).copy()
+            # if k in [
+            #     'bev_global_orient', 'bev_body_pose', 'bev_transl', 
+            #     'bev_keypoints', 'bev_vertices'
+            # ]:
+            #     v = v[0]
+            human_data[k] = v.clone() 
 
         image_data_template.update(human_data)
 
@@ -241,12 +241,12 @@ class Behave():
                 open(gt_path, 'rb'))
             
             pgt_data = {
-                'pgt_smplx_betas': gt_fits['betas'],
-                'pgt_smplx_global_orient': gt_fits['pose'][:3],
-                'pgt_smplx_body_pose': gt_fits['pose'][3:],
-                'pgt_smplx_transl': gt_fits['trans'],
-                'pgt_obj_global_orient': gt_fits['obj_angle'],
-                'pgt_obj_global_transl': gt_fits['obj_trans']
+                'pgt_betas': gt_fits['betas'],
+                'pgt_global_orient': gt_fits['global_orient'],
+                'pgt_body_pose': gt_fits['pose'],
+                'pgt_transl': gt_fits['trans'],
+                'pgt_orient_obj': gt_fits['obj_angle'],
+                'pgt_transl_obj': gt_fits['obj_trans']
             }
             image_data_template.update(pgt_data)
 

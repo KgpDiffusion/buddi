@@ -178,12 +178,12 @@ class LossModule(nn.Module):
         #Object rotation loss
         if self.pseudogt_obj_pose_weight > 0:
             ld['pseudogt_obj_pose_losses'] += self.get_pseudogt_pose_loss(
-                tar_params['orient_obj'], est_params['orient_obj'], device)
+                tar_params['orient_obj'], est_params['orient_obj'].unsqueeze(1), device)
             
         # Object Translation loss
         if self.pseudogt_obj_transl_weight > 0:
             ld['pseudogt_obj_transl_losses'] += self.get_pseudogt_transl_loss(
-                tar_params['transl_obj'], est_params['transl_obj'], device)
+                tar_params['transl_obj'], est_params['transl_obj'].unsqueeze(1), device)
 
         # average the losses over batch
         ld_out = {}
