@@ -180,7 +180,7 @@ class Behave():
         focal_length_px = (max(width, height)/2) / math.tan(afov_radians)
 
         image_data_template = {
-            'imgname': f'{imgname}.png',
+            'imgname': imgname,
             'imgpath': img_path,
             'image': img,
             'img_height': height,
@@ -236,7 +236,7 @@ class Behave():
         image_data_template.update(human_data)
 
         if self.has_pseudogt:
-            gt_path = osp.join(self.image_folder, f'{imgname}.pkl')
+            gt_path = osp.join(self.image_folder, imgname[:-3] + 'pkl')
             gt_fits = pickle.load(
                 open(gt_path, 'rb'))
             
@@ -245,8 +245,8 @@ class Behave():
                 'pgt_global_orient': gt_fits['global_orient'],
                 'pgt_body_pose': gt_fits['pose'],
                 'pgt_transl': gt_fits['trans'],
-                'pgt_orient_obj': gt_fits['obj_angle'],
-                'pgt_transl_obj': gt_fits['obj_trans']
+                'pgt_orient_obj': gt_fits['obj_angle'],  # 1, 3
+                'pgt_transl_obj': gt_fits['obj_trans']   # 1, 3
             }
             image_data_template.update(pgt_data)
 
