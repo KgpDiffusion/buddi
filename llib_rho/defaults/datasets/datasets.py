@@ -10,9 +10,10 @@ class Behave:
     data_folder: str = 'datasets/original/behave'
     image_folder: str = 'images'
     bev_folder: str = 'bev'
-    openpose_folder: str = 'keypoints/keypoints'
+    openpose_folder: str = 'keypoints/openpose'
     vitpose_folder: str = 'keypoints/vitpose'
     vitposeplus_folder: str = 'keypoints/vitposeplus'
+    pseudogt_folder: str = 'gt'
     image_format: str = 'jpg'
     overfit: bool = False
     overfit_num_samples: int = 12    

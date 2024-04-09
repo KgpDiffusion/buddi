@@ -2,6 +2,7 @@ import os.path as osp
 import smplx
 from llib_rho.bodymodels.build_smpl_family import smpl_cfg_to_args
 from .utils import *
+from llib_rho.bodymodels.smplx_ours import SMPLX_Ours
 
 def build_joint_mapper(joint_mapper_type, joint_mapper_cfg):
     """ 
@@ -64,7 +65,10 @@ def build_bodymodel(
 
         # create smpl model
         if smpl_args['age'] == 'adult':
-            body_model = smplx.create(**smpl_args).to(device)
+            mt = smpl_args.pop('model_type')
+            mp = smpl_args.pop('model_path')
+            smpl_args['model_path'] = osp.join(mp, mt)
+            body_model = SMPLX_Ours(**smpl_args).to(device)
         else:
             raise NotImplementedError
     else:

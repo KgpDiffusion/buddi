@@ -62,6 +62,7 @@ class DiffusionTransformer:
     use_cross_attention: bool = False
     share_linear_layers: bool = False
     encode_target: bool = True
+    obj_embed_dim:int = 256
 
 
 @dataclass 

@@ -61,6 +61,23 @@ class LossModule(nn.Module):
 
     def get_init_pose_loss(self, init_pose, est_body_pose, device):
         raise NotImplementedError
+    
+    def get_pseudogt_obj_pose_loss(self, init_pose, est_pose, device):
+        bs = init_pose.shape[0]
+        init_pose_rotmat = batch_rodrigues(init_pose.view(bs, -1, 3).reshape(-1, 3)).view(bs, -1, 3, 3)
+        est_body_pose_rotmat = batch_rodrigues(est_pose.reshape(bs, -1, 3).reshape(-1,3)).reshape(bs, -1, 3, 3)
+        mseloss = nn.MSELoss().to('cuda')
+        init_pose_prior_loss = (
+            (init_pose_rotmat - est_body_pose_rotmat)**2
+        ).sum((1,2,3)).mean() * self.pseudogt_obj_pose_weight
+        return init_pose_prior_loss
+    
+    def get_pseudogt_obj_transl_loss(self, init_transl, est_transl, device):
+        init_transl = init_transl
+        est_transl = est_transl
+        pgt_transl_loss = self.pseudogt_obj_transl_crit(
+            init_transl, est_transl) * self.pseudogt_obj_transl_weight
+        return pgt_transl_loss
 
     def get_pseudogt_pose_loss(self, init_pose, est_body_pose, device):
         """Pose prior loss (pushes to pseudo-ground truth pose)"""
@@ -157,8 +174,6 @@ class LossModule(nn.Module):
             # concat scale and betas
             ld['pseudogt_shape_losses'+h] += self.get_pseudogt_shape_loss(
                 tar_smpl[hidx].betas, est_smpl[hidx].betas, device)
-            ld['pseudogt_scale_losses'+h] += ((tar_smpl[hidx].scale - est_smpl[hidx].scale) ** 2) * \
-                self.pseudogt_shape_weight
 
         # pose prior losses for each human
         if self.pseudogt_transl_weight > 0:
@@ -177,12 +192,12 @@ class LossModule(nn.Module):
             
         #Object rotation loss
         if self.pseudogt_obj_pose_weight > 0:
-            ld['pseudogt_obj_pose_losses'] += self.get_pseudogt_pose_loss(
+            ld['pseudogt_obj_pose_losses'] += self.get_pseudogt_obj_pose_loss(
                 tar_params['orient_obj'], est_params['orient_obj'].unsqueeze(1), device)
             
         # Object Translation loss
         if self.pseudogt_obj_transl_weight > 0:
-            ld['pseudogt_obj_transl_losses'] += self.get_pseudogt_transl_loss(
+            ld['pseudogt_obj_transl_losses'] += self.get_pseudogt_obj_transl_loss(
                 tar_params['transl_obj'], est_params['transl_obj'].unsqueeze(1), device)
 
         # average the losses over batch

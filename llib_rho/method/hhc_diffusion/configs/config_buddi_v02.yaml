@@ -1,4 +1,4 @@
-batch_size: 512
+batch_size: 32
 device: cuda
 logging:
   base_folder: demo/buddi/training/
@@ -17,8 +17,8 @@ datasets:
   train_composition: [1.0]
   val_names: ['behave']
   behave:
-    data_folder: datasets/original/behave
-    pseudogt_folder: gt
+    data_folder: /home/shubhikg/data_subset
+    pseudogt_folder: gt_smplx
   augmentation:
     use: false
   processing:
@@ -41,6 +41,7 @@ model:
       heads: 8
       mlp_dim: 500
       dropout: 0.1
+      obj_embed_dim: 256
       use_positional_encoding: false
       use_positional_embedding: false
       use_param_embedding: true
@@ -89,7 +90,7 @@ model:
         d1_aggregation: sum
       pseudogt_v2v:
         type: l2
-        weight: [1.0]
+        weight: [100.0]
         squared: true
         translated: false
         weighted: false

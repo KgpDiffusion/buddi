@@ -73,7 +73,7 @@ class SingleDataset(Dataset):
         self.body_model_type = body_model_type
 
         self.img_dir = osp.join(
-            dataset_cfg.original_data_folder, dataset_cfg.image_folder
+            dataset_cfg.data_folder, dataset_cfg.image_folder
         )
 
         # self.normalize_img = Normalize(

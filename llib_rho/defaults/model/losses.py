@@ -86,3 +86,5 @@ class Losses:
     diffusion_prior_transl: L2Loss = L2Loss(type="l2", squared=True)
     diffusion_prior_v2v: L2Loss = L2Loss(type="l2", squared=True)
     vae_prior_latent: L2Loss = L2Loss(type="l2", squared=True)
+    pseudogt_obj_pose: L2Loss = L2Loss(type="l2", squared=True)
+    pseudogt_obj_transl: L2Loss = L2Loss(type="l2", squared=True)

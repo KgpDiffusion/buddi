@@ -144,7 +144,6 @@ class TrainModule(nn.Module):
 
         # concatenate global orientation and poses of two humans
         # param = torch.cat((global_orient_h0, global_orient_h1), dim=1)
-
         if to_unit_rotation:
             target_rotation = self.unit_rotation
 
@@ -266,8 +265,7 @@ class TrainModule(nn.Module):
         smpl_h0 = self.body_model(
             global_orient=orient[:, 0],
             body_pose=pose[:, 0],
-            betas=shape[:, 0, :-1],
-            scale=shape[:, 0, -1:],
+            betas=shape[:, 0],
             transl=transl[:, 0],
         )
 
@@ -515,7 +513,7 @@ class TrainModule(nn.Module):
                     value = v[:, ii] if not keep_dim else v[:, [ii]]
                     out.update({f"{pp}_h{ii}": value})
             else:
-                out.update({pp: value[:, 0] if not keep_dim else value[:, [0]]})
+                out.update({pp: v[:, 0] if not keep_dim else v[:, [0]]})
         return out
 
     def concat_humans(self, x):
@@ -951,7 +949,7 @@ class TrainModule(nn.Module):
         else:
             return x_ts, x_starts
 
-    def diffuse_denoise(self, x, y, t, noise=None, return_latent_vec=False):
+    def diffuse_denoise(self, x, y, t, obj, noise=None, return_latent_vec=False):
         """Add noise to input and forward through diffusion model."""
 
         # add noise to params
@@ -973,6 +971,7 @@ class TrainModule(nn.Module):
             x=x,  # diffused_tokens_dict,
             timesteps=self.diffusion._scale_timesteps(t),
             guidance=y,
+            obj=obj,
             return_latent_vec=return_latent_vec,
         )
 
@@ -1013,7 +1012,10 @@ class TrainModule(nn.Module):
         # select and transform input (e.g. bev or pseudo gt)
         guidance_params = self.get_guidance_params(batch)
 
-        # overwrite batch with corret input        
+        # Get obj embeddings
+        obj_embeddings = batch['obj_embeddings'][:, 0]  # B, 256
+
+        # overwrite batch with corret input
         batch = self.cast_smpl(self.preprocess_batch(batch))
 
         # target / gt params
@@ -1024,7 +1026,7 @@ class TrainModule(nn.Module):
         t, weights = self.schedule_sampler.sample(self.bs, "cuda")
 
         # diffusion forward (add noise) and backward (remove noise) process
-        diffusion_output = self.diffuse_denoise(x=batch, y=guidance_params, t=t)
+        diffusion_output = self.diffuse_denoise(x=batch, y=guidance_params, t=t, obj=obj_embeddings)
 
         # compute custom loss for diffusion model predicting x_start
         if self.diffusion.model_mean_type == "start_x":

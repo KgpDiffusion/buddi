@@ -40,7 +40,11 @@ class Behave():
 
         self.data_folder = data_folder
         self.split = split
-        self.imgnames = os.listdir(os.path.join(data_folder, split, image_folder))
+        # self.imgnames = os.listdir(os.path.join(data_folder, split, image_folder))
+        self.imgnames = []
+        for img in os.listdir(os.path.join(data_folder, split, pseudogt_folder)):
+            img = img[:-4]
+            self.imgnames.append(img + ".jpg")
 
         self.body_model_type = body_model_type
         self.image_folder = osp.join(self.data_folder, self.split, image_folder)
@@ -55,6 +59,14 @@ class Behave():
 
         # create body model to get bev root translation from pose params
         self.body_model = self.shape_converter_smpl.outbm
+
+        meta_data_path = os.path.join(data_folder, split, 'metadata.pkl')
+        self.meta_data = pickle.load(open(meta_data_path, 'rb'))
+
+        self.obj_embeddings = {}
+        obj_embeddings = np.load(os.path.join(data_folder, split, 'obj_embeddings.npy'), allow_pickle=True)
+        for key in obj_embeddings.item().keys():
+            self.obj_embeddings[key] = np.expand_dims(obj_embeddings.item()[key], axis=0).astype(np.float32)
 
     def process_bev(self, bev_human_idx, bev_data, image_size):
 
@@ -74,7 +86,7 @@ class Behave():
             'bev_smpl_global_orient': smpl_global_orient,
             'bev_smpl_body_pose': smpl_body_pose,
             'bev_smpl_betas': smpl_betas,
-            'bev_betas': smplx_betas.float().unsqueeze(0),
+            'bev_betas': smplx_betas.float().squeeze(0).cpu().numpy(),
             'bev_cam_trans': cam_trans,
             'bev_smpl_joints': smpl_joints,
             'bev_smpl_vertices': smpl_vertices,
@@ -149,7 +161,7 @@ class Behave():
         smplx_update['bev_vertices'].append(vertices)
 
         for k, v in smplx_update.items():
-            smplx_update[k] = torch.cat(v, dim=0)
+            smplx_update[k] = torch.cat(v, dim=0).float()
 
         data.update(smplx_update)
 
@@ -194,6 +206,11 @@ class Behave():
         human_idx = 0 # We only have one human in our data
         human_data = self.process_bev(human_idx, bev_data, (height, width))
 
+        # get obj name and corresponding embeddings
+        obj_name = self.meta_data[imgname[:-4]][1]
+        obj_embeddings = self.obj_embeddings[obj_name]
+        image_data_template['obj_embeddings'] = obj_embeddings  # 1, 256
+
         # process OpenPose keypoints
         kpts = op_data[human_idx]
         # body + hands
@@ -224,29 +241,29 @@ class Behave():
 
         human_data['vitpose'] = vitpose_kpts
         human_data['openpose'] = op_kpts
-        for k, v in human_data.items():
+        # for k, v in human_data.items():
 
-            # if k in [
-            #     'bev_global_orient', 'bev_body_pose', 'bev_transl', 
-            #     'bev_keypoints', 'bev_vertices'
-            # ]:
-            #     v = v[0]
-            human_data[k] = v.clone() 
+        #     # if k in [
+        #     #     'bev_global_orient', 'bev_body_pose', 'bev_transl', 
+        #     #     'bev_keypoints', 'bev_vertices'
+        #     # ]:
+        #     #     v = v[0]
+        #     human_data[k] = v.clone() 
 
         image_data_template.update(human_data)
 
         if self.has_pseudogt:
-            gt_path = osp.join(self.image_folder, imgname[:-3] + 'pkl')
+            gt_path = osp.join(self.pseudogt_folder, imgname[:-3] + 'pkl')
             gt_fits = pickle.load(
                 open(gt_path, 'rb'))
             
             pgt_data = {
-                'pgt_betas': gt_fits['betas'],
-                'pgt_global_orient': gt_fits['global_orient'],
-                'pgt_body_pose': gt_fits['pose'],
-                'pgt_transl': gt_fits['trans'],
-                'pgt_orient_obj': gt_fits['obj_angle'],  # 1, 3
-                'pgt_transl_obj': gt_fits['obj_trans']   # 1, 3
+                'pgt_betas': gt_fits['betas'].astype(np.float32),
+                'pgt_global_orient': gt_fits['global_orient'].astype(np.float32),
+                'pgt_body_pose': gt_fits['pose'][:, :63].astype(np.float32),
+                'pgt_transl': gt_fits['trans'].astype(np.float32),
+                'pgt_orient_obj': gt_fits['obj_angle'].astype(np.float32),  # 1, 3
+                'pgt_transl_obj': gt_fits['obj_trans'].astype(np.float32),   # 1, 3
             }
             image_data_template.update(pgt_data)
 
@@ -255,5 +272,6 @@ class Behave():
     def load(self):
         data = []
         for imgname in tqdm(self.imgnames):
-            data += self.load_single_image(imgname)
+            img_data = self.load_single_image(imgname)
+            data.append(img_data)
         return data

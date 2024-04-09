@@ -16,7 +16,7 @@ from llib_rho.training.diffusion_trainer import Trainer
 from llib_rho.bodymodels.build import build_bodymodel 
 from llib_rho.cameras.build import build_camera
 from llib_rho.visualization.renderer import Pytorch3dRenderer
-from loss_module import LossModule
+from .loss_module import LossModule
 
 from llib_rho.models.diffusion.build import build_diffusion
 
@@ -25,7 +25,7 @@ from llib_rho.defaults.main import (
     merge as merge_configs
 )
 
-from train_module import TrainModule
+from .train_module import TrainModule
 # from eval_module import EvalModule
 
 import torch
@@ -62,7 +62,8 @@ def train(cfg):
     # create datasets
     train_dataset, val_dataset = build_datasets(
         datasets_cfg=cfg.datasets,
-        body_model_type=cfg.body_model.type # necessary to load the correct contact maps
+        body_model_type=cfg.body_model.type, # necessary to load the correct contact maps
+        build_val=False
     )
     
     # build regressor used to predict diffusion params

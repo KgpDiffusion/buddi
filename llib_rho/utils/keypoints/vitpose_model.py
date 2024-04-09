@@ -8,6 +8,7 @@ import torch.nn as nn
 
 import sys
 from mmpose.apis import inference_top_down_pose_model, init_pose_model, process_mmdet_results, vis_pose_result
+from tqdm import tqdm
 
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 
@@ -56,10 +57,10 @@ class ViTPoseModel(object):
         self,
         image: np.ndarray,
         det_results: list[np.ndarray],
-        box_score_threshold: float,
-        kpt_score_threshold: float,
-        vis_dot_radius: int,
-        vis_line_thickness: int,
+        box_score_threshold: float = 0.5,
+        kpt_score_threshold: float = 0.1,
+        vis_dot_radius: int = 4,
+        vis_line_thickness: int = 1,
     ) -> tuple[list[dict[str, np.ndarray]], np.ndarray]:
         out = self.predict_pose(image, det_results, box_score_threshold)
         vis = self.visualize_pose_results(image, out, kpt_score_threshold,
@@ -109,8 +110,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='Run ViTPose on images')
     parser.add_argument('--device', type=str, default='cuda', help='Device to run ViTPose on')
-    parser.add_argument('--out_folder', type=str, default='demo/data/FlickrCI3D_Signatures/demo/vitpose_live', help='Output folder for keypoints')
-    parser.add_argument('--image_folder', type=str, default='demo/data/FlickrCI3D_Signatures/demo/images', help='Input folder for images')
+    parser.add_argument('--out_folder', type=str, default='/home/shubhikg/data_subset/train/vitpose', help='Output folder for keypoints')
+    parser.add_argument('--image_folder', type=str, default='/home/shubhikg/data_subset/train/images', help='Input folder for images')
     parser.add_argument('--vitpose_model_name', type=str, default='ViTPose+-G (multi-task train, COCO)', help='ViTPose model type')
     parser.add_argument('--detectron_cfg', type=str, default=DETECTRON_CFG, help='Detectron2 config file')
     parser.add_argument('--detectron_url', type=str, default=DETECTRON_URL, help='Detectron2 model URL')
@@ -142,7 +143,7 @@ if __name__ == "__main__":
     img_fns = os.listdir(image_folder)
 
     # Iterate over all images in folder
-    for img_fn in img_fns:
+    for img_fn in tqdm(img_fns):
         img_path = os.path.join(image_folder, img_fn)
         img_cv2 = cv2.imread(img_path)
 
@@ -160,26 +161,49 @@ if __name__ == "__main__":
             [np.concatenate([pred_bboxes, pred_scores[:, None]], axis=1)],
         )
 
+
         json_contents = {}
         json_contents['people'] = []
 
-        # We bring ViTPose keypoints into OpenPose format
-        for person in vitposes_out:
+        largest_human_idx = -1
+        max_area = 0
+
+        for idx, person in enumerate(vitposes_out):
             keypoints = person['keypoints'].astype(np.float64)
-            keypoints_body = keypoints[:17,:]
-            keypoints_left_hand = keypoints[-42:-21,:].reshape(-1)
-            keypoints_right_hand = keypoints[-21:].reshape(-1)
-            keypoints_face = np.concatenate((keypoints[23:-42].reshape(-1), np.zeros(6)))
-            body_pose = np.zeros([25,3])
-            body_pose[[0, 16, 15, 18, 17, 5, 2, 6, 3, 7, 4, 12, 9, 13, 10, 14, 11]] = keypoints_body
-            body_pose[[19,20,21]] = keypoints[[17,18,19],:] # left foot
-            body_pose[[22,23,24]] = keypoints[[20,21,22],:] # right foot
-            body_pose = np.reshape(body_pose, -1)
-            
-            json_contents['people'].append({'pose_keypoints_2d':list(body_pose),
-                                            'hand_left_keypoints_2d':list(keypoints_left_hand),
-                                            'hand_right_keypoints_2d':list(keypoints_right_hand),
-                                            'face_keypoints_2d': list(keypoints_face)})
+            keypoints_body_filter = keypoints[:, 2] > 0.1
+            keypoints = keypoints[keypoints_body_filter]
+            xmin = np.min(keypoints[:, 0])
+            xmax = np.max(keypoints[:, 0])
+
+            ymin = np.min(keypoints[:, 1])
+            ymax = np.max(keypoints[:, 1])
+            curr_area = (xmax - xmin)*(ymax - ymin)
+            if curr_area > max_area:
+                max_area = curr_area
+                largest_human_idx = idx
+
+        if largest_human_idx < 0:
+            print(f'No human detected for {img_fn}')
+            continue
+        largest_person = vitposes_out[largest_human_idx]
+        
+
+        # We bring ViTPose keypoints into OpenPose format
+        keypoints = largest_person['keypoints'].astype(np.float64)
+        keypoints_body = keypoints[:17,:]
+        keypoints_left_hand = keypoints[-42:-21,:].reshape(-1)
+        keypoints_right_hand = keypoints[-21:].reshape(-1)
+        keypoints_face = np.concatenate((keypoints[23:-42].reshape(-1), np.zeros(6)))
+        body_pose = np.zeros([25,3])
+        body_pose[[0, 16, 15, 18, 17, 5, 2, 6, 3, 7, 4, 12, 9, 13, 10, 14, 11]] = keypoints_body
+        body_pose[[19,20,21]] = keypoints[[17,18,19],:] # left foot
+        body_pose[[22,23,24]] = keypoints[[20,21,22],:] # right foot
+        body_pose = np.reshape(body_pose, -1)
+        
+        json_contents['people'].append({'pose_keypoints_2d':list(body_pose),
+                                        'hand_left_keypoints_2d':list(keypoints_left_hand),
+                                        'hand_right_keypoints_2d':list(keypoints_right_hand),
+                                        'face_keypoints_2d': list(keypoints_face)})
 
         img_fn, _ = os.path.splitext(os.path.basename(img_path))
         f = open(os.path.join(out_folder, f'{img_fn}_keypoints.json'), 'w')

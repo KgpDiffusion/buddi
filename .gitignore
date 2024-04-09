@@ -10,8 +10,10 @@ demo/out
 demo/buddi 
 demo/optimization
 demo/diffusion
+demo/*
 llib_old
 *.pth
+.wandb
 
 *.swp
 
