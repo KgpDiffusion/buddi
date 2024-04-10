@@ -104,8 +104,8 @@ class Pytorch3dRenderer(nn.Module):
 
         mesh_bs = vertices.shape[0]
 
-        if len(colors) == 1:
-            colors = colors * mesh_bs
+        # if len(colors) == 1:
+        #     colors = colors * mesh_bs
 
         if textures is None:
             textures = self.texturer.quick_texture(

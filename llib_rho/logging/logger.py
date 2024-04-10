@@ -124,9 +124,8 @@ class Logger():
                 OmegaConf.save(self.cfg, f)
         else:
             new_config_file_path = osp.join(self.out_folder, 'config_latest_run.yaml')
-            if not osp.exists(new_config_file_path):
-                with open(new_config_file_path, 'w') as f:
-                    OmegaConf.save(self.cfg, f)
+            with open(new_config_file_path, 'w') as f:
+                OmegaConf.save(self.cfg, f)
             logger.warning('Config file already exists. Not overwriting config.yaml. Save settings to config_latest_run.yaml.')
             
     def get_latest_checkpoint(self):
@@ -184,16 +183,16 @@ class Logger():
                 'batch_size': checkpoint['batch_size'],
                 'total_steps': checkpoint['total_steps']}
 
-    def get_checkpoint_fn(self, epoch, batch_idx, val_error):
+    def get_checkpoint_fn(self, epoch, batch_idx):
         timestamp = datetime.datetime.now().strftime('%Y_%m_%d-%H_%M_%S')
-        ckpt_name = f'{timestamp}__{epoch:010}__{batch_idx:010}__{val_error:.02f}.pt'
+        ckpt_name = f'{timestamp}__{epoch:010}__{batch_idx:010}.pt'
         ckpt_path = osp.abspath(osp.join(self.ckpt_folder, ckpt_name))
         logger.info(f'Saving checkpoint to {ckpt_path}')
         return ckpt_path
 
     def save_checkpoint(self, 
         train_module, optimizers, epoch, batch_idx, batch_size, 
-        total_steps, val_error
+        total_steps
     ):
         """Save checkpoint."""
 
@@ -208,7 +207,7 @@ class Logger():
         checkpoint['batch_size'] = batch_size
         checkpoint['total_steps'] = total_steps
 
-        ckpt_path = self.get_checkpoint_fn(epoch, batch_idx, val_error)
+        ckpt_path = self.get_checkpoint_fn(epoch, batch_idx)
         torch.save(checkpoint, ckpt_path)
 
     def print_loss_dict(self, ld, stage=0, step=0, abbr=True):

@@ -63,7 +63,7 @@ class TrainModule(nn.Module):
         self.evaluator = evaluator
 
         self.body_model = body_model
-        self.body_model_type = type(self.body_model).__name__.lower()
+        self.body_model_type = type(self.body_model).__name__.lower().split('_')[0]
         face_tensor = torch.from_numpy(self.body_model.faces.astype(np.int32))
         self.register_buffer("faces_tensor", face_tensor)
 
@@ -92,10 +92,10 @@ class TrainModule(nn.Module):
                     self.meshes_to_render[f'{ds_name}_{kk}'] = self.meshes_to_render[kk]
         
         self.meshcols = {
-            "input": ["light_blue1", "light_blue6"],
-            "input_noise": ["light_red1", "light_red6"],
-            "input_with_guidance": ["light_green1", "light_green6"],
-            "sampled_0": ["light_yellow1", "light_yellow6"],
+            "input": ["light_blue1",],
+            "input_noise": ["light_red1", ],
+            "input_with_guidance": ["light_green1", ],
+            "sampled_0": ["light_yellow1", ],
         }
 
         self.renderer = renderer

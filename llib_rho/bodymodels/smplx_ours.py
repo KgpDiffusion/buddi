@@ -25,7 +25,7 @@ class SMPLX_Ours(SMPLX):
         super(SMPLX_Ours, self).__init__(**kwargs)
 
     def name(self) -> str:
-        return 'SMPL-X_Ours'
+        return 'SMPL-X'
 
     def forward(
         self,

@@ -255,7 +255,7 @@ class Trainer(nn.Module):
                 guru.info(f'Add train summary ({self.epoch}/{self.max_epochs} epochs; {self.steps} steps) ...')
 
                 if 'images' in output.keys():
-                    self.add_summary_images(output['images'], split='train', max_images=min(12, self.batch_size))
+                    self.add_summary_images(output['images'], split='train', max_images=min(4, self.batch_size))
                 for name, values in self.histograms.items(): # add histograms
                     if len(values) > 0:
                         # self.logger.tsw.add_histogram(name, torch.cat(values, dim=0), self.steps)
@@ -267,7 +267,7 @@ class Trainer(nn.Module):
 
                 guru.info(f'Run validation ({self.epoch}/{self.max_epochs} epochs; {self.steps} steps) ...')
 
-                ckpt_metric = self.validate()
+                # ckpt_metric = self.validate()
                 # val_output = self.train_module.evaluator.tb_output
 
                 # save validation images
@@ -276,7 +276,7 @@ class Trainer(nn.Module):
 
                 # save checkpoint
                 self.logger.save_checkpoint(self.train_module, self.optimizers_dict,
-                    self.epoch, batch_idx+1, self.batch_size, self.steps, ckpt_metric)
+                    self.epoch, batch_idx+1, self.batch_size, self.steps)
 
     def add_summary_images(self, output, split='train', max_images=32, ds_name=''):
         """Write summary to Tensorboard."""

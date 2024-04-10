@@ -66,7 +66,7 @@ class Texturer():
         textures = TexturesVertex(verts_features=verts_rgb)
         return textures
     
-    def quick_texture(self, vertices=None, batch_size=2, body_model='smplx', colors=['blue', 'red']):
+    def quick_texture(self, vertices=None, batch_size=2, body_model='smplx', colors=['blue',]):
         """
         Create texture for meshes. If vertices are provided, batch size and number of vertices is taken from there.
         Otherwise, these two parameters need to be provided.
