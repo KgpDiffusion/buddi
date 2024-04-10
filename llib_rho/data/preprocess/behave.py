@@ -68,6 +68,15 @@ class Behave():
         for key in obj_embeddings.item().keys():
             self.obj_embeddings[key] = np.expand_dims(obj_embeddings.item()[key], axis=0).astype(np.float32)
 
+        with open(os.path.join(data_folder, split, "ref_hoi.pkl"), "rb") as f:
+            x = pickle.load(f)
+            data = x['templates']['chairblack']
+            verts = data['verts']
+            faces = data['faces']
+            self.mesh = trimesh.Trimesh(vertices=verts, faces=faces)
+
+        
+
     def process_bev(self, bev_human_idx, bev_data, image_size):
 
         smpl_betas = bev_data['smpl_betas'][bev_human_idx][:10]
@@ -274,4 +283,4 @@ class Behave():
         for imgname in tqdm(self.imgnames):
             img_data = self.load_single_image(imgname)
             data.append(img_data)
-        return data
+        return data, self.mesh

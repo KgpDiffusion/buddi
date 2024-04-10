@@ -4,7 +4,7 @@ logging:
   base_folder: demo/buddi/training/
   run: demo_buddi_v02
   summaries_freq: 100.0
-  checkpoint_freq: 100.0
+  checkpoint_freq: 400.0
   logger: 'wandb'
   project_name: 'KgpDiffusion'
 training:

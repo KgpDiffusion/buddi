@@ -83,13 +83,15 @@ class SingleDataset(Dataset):
 
         self.data = self.load_data()
         self.len = len(self.data)
+        
 
     def load_data(self):
-        dataset = Behave(
+        dataset, mesh = Behave(
             **self.dataset_cfg, 
             split=self.split,
             body_model_type=self.body_model_type
         ).load()
+        self.mesh = mesh
         return dataset
     
     def to_tensors(self, target):

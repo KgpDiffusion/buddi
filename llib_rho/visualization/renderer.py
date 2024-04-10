@@ -77,25 +77,37 @@ class Pytorch3dRenderer(nn.Module):
         )
 
 
-    def vertices_faces_to_mesh(self, vertices, faces, textures):
+    def vertices_faces_to_mesh(self, vertices, faces, vertices_obj, faces_obj, textures, textures_obj):
         
         
         mesh_bs = vertices.shape[0]
         verts_list = [v for v in vertices]
         faces_list = mesh_bs * [faces]
 
+        verts_list_obj = [v for v in vertices_obj]
+        faces_list_obj = mesh_bs * [faces_obj]
+
         meshes = Meshes(
             verts=verts_list,
             faces=faces_list,
             textures=textures
         ) 
-        meshes = join_meshes_as_scene(meshes)
+
+        meshes_obj = Meshes(
+            verts=verts_list_obj,
+            faces=faces_list_obj,
+            textures=textures_obj
+        ) 
+
+        meshes = join_meshes_as_scene([meshes, meshes_obj])
 
         return meshes
 
     def build_meshes(self, 
         vertices, 
         faces, 
+        vertices_obj,
+        faces_obj,
         textures=None, 
         body_model='smplx',
         colors = ['light_blue']
@@ -111,11 +123,16 @@ class Pytorch3dRenderer(nn.Module):
             textures = self.texturer.quick_texture(
                 batch_size=mesh_bs, 
                 body_model=body_model, 
-                colors=colors
+                colors=[colors[0]]
+            ).to(self.device)
+            textures_obj = self.texturer.quick_texture(
+                batch_size=mesh_bs, 
+                vertices=vertices_obj, 
+                colors=[colors[1]]
             ).to(self.device)
 
         meshes = self.vertices_faces_to_mesh(
-            vertices, faces, textures
+            vertices, faces, vertices_obj, faces_obj, textures, textures_obj
         )
 
         return meshes
@@ -200,7 +217,9 @@ class Pytorch3dRenderer(nn.Module):
 
     def render(self, 
         vertices, 
-        faces, 
+        faces,
+        vertices_obj,
+        faces_obj, 
         out_fn=None, 
         textures=None, 
         body_model='smplx', 
@@ -216,6 +235,7 @@ class Pytorch3dRenderer(nn.Module):
         else:
             mesh = self.build_meshes(
                 vertices, faces, 
+                vertices_obj, faces_obj,
                 textures=textures, 
                 body_model=body_model,
                 colors=colors

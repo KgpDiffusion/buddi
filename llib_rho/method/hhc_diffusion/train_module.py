@@ -76,7 +76,8 @@ class TrainModule(nn.Module):
 
 
         self.meshes_to_render = {
-            'single_step_random_t': ["input", "input_noise", "input_with_guidance","sampled_0"],
+            # 'single_step_random_t': ["input", "input_noise", "input_with_guidance","sampled_0"],
+            'single_step_random_t': ["input", "input_noise", "sampled_0"],
             'single_step_25_t': ["input", "input_noise", "input_with_guidance", "sampled_0"],
             'single_step_50_t': ["input", "input_noise", "input_with_guidance", "sampled_0"],
             'single_step_75_t': ["input", "input_noise", "input_with_guidance", "sampled_0"],
@@ -92,10 +93,10 @@ class TrainModule(nn.Module):
                     self.meshes_to_render[f'{ds_name}_{kk}'] = self.meshes_to_render[kk]
         
         self.meshcols = {
-            "input": ["light_blue1",],
-            "input_noise": ["light_red1", ],
-            "input_with_guidance": ["light_green1", ],
-            "sampled_0": ["light_yellow1", ],
+            "input": ["light_blue1", "light_blue6"],
+            "input_noise": ["light_red1", "light_red6"],
+            "input_with_guidance": ["light_green1", "light_green6"],
+            "sampled_0": ["light_yellow1", "light_yellow6"],
         }
 
         self.renderer = renderer
@@ -116,6 +117,9 @@ class TrainModule(nn.Module):
         self.transl_dim = 3
         self.orient_obj_dim = 6 if self.exp_cfg.rotrep == "sixd" else 3
         self.transl_obj_dim = 3 
+        self.obj_mesh = train_dataset.mesh
+        self.obj_vertices = torch.from_numpy(self.obj_mesh.vertices.astype(np.float32)).to(self.cfg.device)
+        self.obj_faces = torch.from_numpy(self.obj_mesh.faces.astype(np.float32)).to(self.cfg.device)
 
     def checks(self):
         # 1) check if probs are set correclty for guidance random noise
@@ -1004,6 +1008,7 @@ class TrainModule(nn.Module):
             "gt_noise": input_noise,
             "model_prediction": pred,
             'model_latent_vec': latent_vec if return_latent_vec else None,
+            'x': x
         }
     
     def single_training_step(self, batch):
@@ -1051,6 +1056,29 @@ class TrainModule(nn.Module):
             t.tolist()
         )
 
+        bs = batch['orient_obj'].shape[0]
+        diffused_obj = []
+        denoised_obj = []
+        target_obj = []
+
+        for idx in range(bs):
+            obj_vertices =  self.obj_vertices
+            rot = rotation_6d_to_matrix(diffusion_output['x']['orient_obj'][[idx]])[0]
+            new_postion = obj_vertices @ rot.transpose(0, 1) + diffusion_output['x']['transl_obj'][[idx]]
+            diffused_obj.append(new_postion)
+
+            rot = rotation_6d_to_matrix(diffusion_output['model_prediction']['orient_obj'][[idx]])[0]
+            new_postion = obj_vertices @ rot.transpose(0, 1) + diffusion_output['model_prediction']['transl_obj'][[idx]]
+            denoised_obj.append(new_postion)
+
+            rot = rotation_6d_to_matrix(batch['orient_obj'][idx])[0]
+            new_postion = obj_vertices @ rot.transpose(0, 1) + batch['transl_obj'][idx]
+            target_obj.append(new_postion)
+
+        diffused_obj = torch.stack(diffused_obj, dim=0)
+        denoised_obj = torch.stack(denoised_obj, dim=0)
+        target_obj = torch.stack(target_obj, dim=0)
+
         if len(guidance_params) > 0:
             diffused_output_with_guidance_for_rendering = diffusion_output["diffused_with_guidance_smpls"]
         else:
@@ -1065,6 +1093,9 @@ class TrainModule(nn.Module):
                         #diffusion_output["diffused_with_guidance_smpls"],
                         target_smpls,
                         0,
+                        diffused_obj,
+                        denoised_obj,
+                        target_obj
                     ), imglabel]
             }
         }
@@ -1224,7 +1255,8 @@ class TrainModule(nn.Module):
     ############################# CREATE OUTPUT DATA FOR TENSORBOARD #############################
     ##############################################################################################
     def get_tb_image_data(
-        self, sampled_smpls, input_noise_smpls=None, input_with_guidance=None, input_smpls=None, timestep=0
+        self, sampled_smpls, input_noise_smpls=None, input_with_guidance=None, input_smpls=None, timestep=0,
+        diffused_obj=None, denoised_obj=None, target_obj=None
     ):
         out = {}
         out[f"h0_sampled_{timestep}"] = sampled_smpls
@@ -1234,6 +1266,12 @@ class TrainModule(nn.Module):
             out[f"h0_input_noise"] = input_noise_smpls
         if input_with_guidance is not None:
             out[f"h0_input_with_guidance"] = input_with_guidance
+        if denoised_obj is not None:
+            out[f"obj_sampled_{timestep}"] = denoised_obj
+        if diffused_obj is not None:
+            out[f"obj_input_noise"] = diffused_obj
+        if target_obj is not None:
+            out[f"obj_input"] = target_obj
         return out
 
     def get_tb_histogram_data(self, params):
@@ -1253,9 +1291,11 @@ class TrainModule(nn.Module):
         self,
         batch_size,
         verts_h0,
+        verts_obj,
         body_model_type,
         meshcol,
         faces_tensor,
+        obj_faces_tensor,
         view_to_row,
         method_idx=0,
         timesteps=None,
@@ -1285,19 +1325,26 @@ class TrainModule(nn.Module):
 
             vh0 = verts_h0[idx]
             verts = torch.cat([vh0], dim=0)
+            obj = verts_obj[idx]
+            verts_obj0 = torch.cat([obj], dim=0)
 
             if vertex_transl_center is None:
                 vertex_transl_center = verts.mean((0, 1))
+                # vertex_transl_center_obj = verts_obj0.mean((0, 1))
             else:
                 if not vertex_transl_center.shape == torch.Size([3]):
                     vertex_transl_center = vertex_transl_center[idx]
+                    # vertex_transl_center_obj = vertex_transl_center[idx]
             verts_centered = verts - vertex_transl_center
+            verts_centered_obj = verts_obj0 - vertex_transl_center
 
             for yy in [-20, 20]:
                 self.renderer.update_camera_pose(0.0, yy, 180.0, 0.0, 0.2, 2.0)
                 rendered_img = self.renderer.render(
                     verts_centered,
                     faces_tensor,
+                    verts_centered_obj,
+                    obj_faces_tensor,
                     colors=meshcol,
                     body_model=body_model_type,
                 )
@@ -1314,6 +1361,8 @@ class TrainModule(nn.Module):
                 rendered_img = self.renderer.render(
                     verts_centered,
                     faces_tensor,
+                    verts_centered_obj,
+                    obj_faces_tensor,
                     colors=meshcol,
                     body_model=body_model_type,
                 )
@@ -1363,13 +1412,20 @@ class TrainModule(nn.Module):
                         output[f"h0_{name}"].vertices[[iidx]].detach()
                         for iidx in range(max_images)
                     ]
+
+                    verts_obj = [
+                        output[f"obj_{name}"][[iidx]].detach()
+                        for iidx in range(max_images)
+                    ]
                     
                     self.render_one_method(
                         max_images,
                         verts_h0,
+                        verts_obj,
                         self.body_model_type,
                         self.meshcols[name],
                         self.faces_tensor,
+                        self.obj_faces,
                         view_to_row,
                         idx,
                         timesteps,
