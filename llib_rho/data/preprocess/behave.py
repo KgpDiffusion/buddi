@@ -46,7 +46,9 @@ class Behave():
             img = img[:-4]
             self.imgnames.append(img + ".jpg")
 
+        assert body_model_type in ['smpl', 'smplh', 'smplx'], "Can only handle smpl, smplh and smplx body model."
         self.body_model_type = body_model_type
+
         self.image_folder = osp.join(self.data_folder, self.split, image_folder)
         self.openpose_folder = osp.join(self.data_folder, self.split, openpose_folder)
         self.bev_folder = osp.join(self.data_folder, self.split, bev_folder)
@@ -55,10 +57,14 @@ class Behave():
         self.has_pseudogt = False if pseudogt_folder == '' else True
 
         self.num_verts = 10475 if self.body_model_type == 'smplx' else 6890
-        self.shape_converter_smpl = ShapeConverter(inbm_type='smpl', outbm_type='smplx')
+        self.shape_converter_smpl = ShapeConverter(inbm_type='smpl', outbm_type=self.body_model_type)
 
         # create body model to get bev root translation from pose params
         self.body_model = self.shape_converter_smpl.outbm
+        if self.body_model_type == 'smplh':
+            model_folder = osp.join('essentials', 'body_models')
+            self.male_body_model = smplx.create(model_path=model_folder, model_type='smplh', gender='male')
+            self.female_body_model = smplx.create(model_path=model_folder, model_type='smplh', gender='female')
 
         meta_data_path = os.path.join(data_folder, split, 'metadata.pkl')
         self.meta_data = pickle.load(open(meta_data_path, 'rb'))
@@ -75,15 +81,20 @@ class Behave():
             faces = data['faces']
             self.mesh = trimesh.Trimesh(vertices=verts, faces=faces)
 
-        
+        self.gender_one_hot = {}
+        self.gender_one_hot['male'] = np.array([[1, 0]], dtype=np.float32)
+        self.gender_one_hot['female'] = np.array([[0, 1]], dtype=np.float32)
 
-    def process_bev(self, bev_human_idx, bev_data, image_size):
+    def process_bev(self, bev_human_idx, bev_data, image_size, gender):
 
         smpl_betas = bev_data['smpl_betas'][bev_human_idx][:10]
         smpl_body_pose = bev_data['smpl_thetas'][bev_human_idx][3:]
         smpl_global_orient = bev_data['smpl_thetas'][bev_human_idx][:3]
 
-        smplx_betas = self.shape_converter_smpl.forward(torch.from_numpy(smpl_betas).unsqueeze(0))
+        if self.body_model_type == 'smplx':
+            new_betas = self.shape_converter_smpl.forward(torch.from_numpy(smpl_betas).unsqueeze(0))
+        else:
+            new_betas = torch.from_numpy(smpl_betas).unsqueeze(0)
        
 
         cam_trans = bev_data['cam_trans'][bev_human_idx]
@@ -95,7 +106,7 @@ class Behave():
             'bev_smpl_global_orient': smpl_global_orient,
             'bev_smpl_body_pose': smpl_body_pose,
             'bev_smpl_betas': smpl_betas,
-            'bev_betas': smplx_betas.float().squeeze(0).cpu().numpy(),
+            'bev_betas': new_betas.float().squeeze(0).cpu().numpy(),
             'bev_cam_trans': cam_trans,
             'bev_smpl_joints': smpl_joints,
             'bev_smpl_vertices': smpl_vertices,
@@ -106,7 +117,7 @@ class Behave():
 
         # hacky - use smpl pose parameters with smplx body model
         # not perfect, but close enough. SMPL betas are not used with smpl-x.
-        if self.body_model_type == 'smplx':
+        if self.body_model_type == 'smplx' or self.body_model_type == 'smplh' or self.body_model_type == 'smpl':
             body_pose = data['bev_smpl_body_pose'][:63]
             global_orient = data['bev_smpl_global_orient']
             betas = data['bev_betas']
@@ -146,7 +157,15 @@ class Behave():
             betas
         ).float().unsqueeze(0)
 
-        body = self.body_model(
+        if self.body_model_type != 'smplh':
+            body_model = self.body_model
+        else:
+            if gender == 'male':
+                body_model = self.male_body_model
+            else:
+                body_model = self.female_body_model
+
+        body = body_model(
             global_orient=h_global_orient,
             body_pose=h_body_pose,
             betas=h_betas,
@@ -156,7 +175,8 @@ class Behave():
         transl = -root_trans.to('cpu') + bev_cam_trans.to('cpu')
         smplx_update['bev_transl'].append(transl)
 
-        body = self.body_model(
+
+        body = body_model(
             global_orient=h_global_orient,
             body_pose=h_body_pose,
             betas=h_betas,
@@ -212,8 +232,12 @@ class Behave():
             'afov_horizontal': self.BEV_FOV,
         }
 
+        # Get gender of human
+        gender = self.meta_data[imgname[:-4]][0]
+        image_data_template['gender'] = self.gender_one_hot[gender] # 1, 2
+
         human_idx = 0 # We only have one human in our data
-        human_data = self.process_bev(human_idx, bev_data, (height, width))
+        human_data = self.process_bev(human_idx, bev_data, (height, width), gender)
 
         # get obj name and corresponding embeddings
         obj_name = self.meta_data[imgname[:-4]][1]
@@ -266,13 +290,14 @@ class Behave():
             gt_fits = pickle.load(
                 open(gt_path, 'rb'))
             
+            pose = np.expand_dims(gt_fits['pose'], axis=0).astype(np.float32)
             pgt_data = {
-                'pgt_betas': gt_fits['betas'].astype(np.float32),
-                'pgt_global_orient': gt_fits['global_orient'].astype(np.float32),
-                'pgt_body_pose': gt_fits['pose'][:, :63].astype(np.float32),
+                'pgt_betas': np.expand_dims(gt_fits['betas'], axis=0).astype(np.float32),
+                'pgt_global_orient': pose[:, :3],
+                'pgt_body_pose': pose[:, 3:66],
                 'pgt_transl': gt_fits['trans'].astype(np.float32),
-                'pgt_orient_obj': gt_fits['obj_angle'].astype(np.float32),  # 1, 3
-                'pgt_transl_obj': gt_fits['obj_trans'].astype(np.float32),   # 1, 3
+                'pgt_orient_obj': np.expand_dims(gt_fits['obj_angle'], axis=0).astype(np.float32),  # 1, 3
+                'pgt_transl_obj': np.expand_dims(gt_fits['obj_trans'], axis=0).astype(np.float32),   # 1, 3
             }
             image_data_template.update(pgt_data)
 

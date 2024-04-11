@@ -28,7 +28,7 @@ class ShapeConverter():
         self.essentials_folder = essentials_folder
 
         assert self.inbm_type in ['smil', 'smpl', 'smpla'], 'Only SMPL to SMPL-X conversion is supported'
-        assert self.outbm_type in ['smplx', 'smplxa'], 'Only SMPL to SMPL-X conversion is supported'
+        assert self.outbm_type in ['smpl', 'smplh', 'smplx', 'smplxa'], 'Only SMPL to SMPL-H/SMPL-X conversion is supported'
 
         self.smpltosmplx = self.load_smpltosmplx()
         self.inbm,  self.inshapedirs = self.load_body_model(model_type=self.inbm_type)
@@ -44,6 +44,10 @@ class ShapeConverter():
         if model_type in ['smpl', 'smplx']:
             model_folder = osp.join(self.essentials_folder, 'body_models')
             bm = smplx.create(model_path=model_folder, model_type=model_type)
+            shapedirs = bm.shapedirs
+        elif model_type in ['smplh']:
+            model_folder = osp.join(self.essentials_folder, 'body_models')
+            bm = smplx.create(model_path=model_folder, model_type=model_type, gender='male')
             shapedirs = bm.shapedirs
         elif model_type == 'smpla':
             model_path = osp.join(self.essentials_folder, 'body_models/smpla/SMPLA_NEUTRAL.pth')

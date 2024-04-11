@@ -170,6 +170,9 @@ class BUDDI(nn.Module):
         # Object embedding
         setattr(self, 'embed_object', GuidanceEmbedder(obj_embed_dim, dim))
 
+        # Gender embedding
+        self.gender_embed = nn.Embedding(2, dim) 
+
         # target parameter embedding and mlp for final params
         for embed_name, embed_dim in embed_target_config.items():
             setattr(self, f'embed_input_{embed_name}', GuidanceEmbedder(embed_dim, dim))
@@ -208,7 +211,7 @@ class BUDDI(nn.Module):
             preditions[k] = getattr(self, f'unembed_input_{k}')(latent[:, idx])
         return preditions
 
-    def forward(self, x, timesteps, guidance={}, obj=None, return_latent_vec=False):
+    def forward(self, x, timesteps, guidance={}, gender=None, obj=None, return_latent_vec=False):
         self.x_keys = list(x.keys())
         
         # embed input parameters
@@ -223,10 +226,19 @@ class BUDDI(nn.Module):
             emb_timesteps = [self.embed_timestep(timesteps)]
         else:
             emb_timesteps = []
+
+        # embed object
         if obj is not None:
             emb_obj = [getattr(self, 'embed_object')(obj).unsqueeze(1)]
         else:
             emb_obj = []
+
+        # embed gender
+        if gender is not None:
+            gender_idx = gender[:, 1].long()
+            emb_gen = [self.gender_embed(gender_idx).unsqueeze(1)]
+        else:
+            emb_gen = []
             
         # embed guidance parameters
         emb_guidance = []
@@ -242,7 +254,7 @@ class BUDDI(nn.Module):
         if self.use_cross_attention:
             xx = torch.cat((emb_x), dim=1)
         else:
-            xx = torch.cat((emb_x + emb_timesteps + emb_guidance + emb_obj), dim=1) # Shape- (B, 6+1+6+1, 152)
+            xx = torch.cat((emb_x + emb_timesteps + emb_guidance + emb_gen + emb_obj), dim=1) # Shape- (B, 6+1+6+1, 152)
 
         # add positional encoding to the input (not learnable / sinoid)
         if self.use_positional_encoding:

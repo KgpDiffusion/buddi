@@ -62,9 +62,10 @@ class TrainModule(nn.Module):
 
         self.evaluator = evaluator
 
-        self.body_model = body_model
-        self.body_model_type = type(self.body_model).__name__.lower().split('_')[0]
-        face_tensor = torch.from_numpy(self.body_model.faces.astype(np.int32))
+        self.male_body_model = body_model[0]
+        self.female_body_model = body_model[1]
+        self.body_model_type = type(self.male_body_model).__name__.lower().split('_')[0]
+        face_tensor = torch.from_numpy(self.male_body_model.faces.astype(np.int32))
         self.register_buffer("faces_tensor", face_tensor)
 
         self.diffusion = diffusion
@@ -248,7 +249,7 @@ class TrainModule(nn.Module):
         self.camera.iw[:] = batch["iw"].unsqueeze(-1)
         self.camera.ih[:] = batch["ih"].unsqueeze(-1)
 
-    def get_smpl(self, params):
+    def get_smpl(self, params, gender):
         """SMPL forward pass from parameters."""
 
         # unpack params if provided
@@ -266,14 +267,34 @@ class TrainModule(nn.Module):
             )
 
         # forward human 1
-        smpl_h0 = self.body_model(
+        gender_male_mask = gender[:, 0] == 1
+        gender_female_mask = gender[:, 1] == 1
+
+        smpl_male_h0 = self.male_body_model(
             global_orient=orient[:, 0],
             body_pose=pose[:, 0],
             betas=shape[:, 0],
             transl=transl[:, 0],
         )
 
-        return smpl_h0
+        smpl_female_h0 = self.female_body_model(
+            global_orient=orient[:, 0],
+            body_pose=pose[:, 0],
+            betas=shape[:, 0],
+            transl=transl[:, 0],
+        )
+
+        keys = smpl_male_h0._fields
+        for key in keys:
+            male_val = eval('smpl_male_h0.' + key)[gender_male_mask]
+            female_val = eval('smpl_female_h0.' + key)[gender_female_mask]
+            bs = male_val.shape[0] + female_val.shape[0]
+            combined_val = torch.ones((bs,) + male_val.shape[1:], dtype=male_val.dtype, device=male_val.device)
+            combined_val[gender_male_mask] = male_val
+            combined_val[gender_female_mask] = female_val
+            smpl_male_h0 = smpl_male_h0._replace(**{key: combined_val})
+
+        return smpl_male_h0
 
     def preprocess_batch(self, batch, in_data=None, clone=False):
         """
@@ -305,6 +326,7 @@ class TrainModule(nn.Module):
     def reset_orient_and_transl(
         self,
         params,
+        gender,
         to_unit_rotation=True,
         target_rotation=None,
         to_unit_transl=True,
@@ -350,23 +372,31 @@ class TrainModule(nn.Module):
         else:
             cam_rotation = None  # self.unit_rotation.repeat(self.bs, 1, 1)
 
-        pelvis = (
-            torch.cat(
+        pelvis = None
+        gender_male_mask = gender[:, 0] == 1
+        gender_female_mask = gender[:, 1] == 1
+        if cam_rotation is not None:
+            male_pelvis = torch.cat(
                 (
-                    self.body_model(
-                        betas=params["betas"][:, 0, :],
-                        scale=params["scale"][:, 0, :],
-                    ).joints[:, [0], :],
-                    self.body_model(
-                        betas=params["betas"][:, 1, :],
-                        scale=params["scale"][:, 1, :],
-                    ).joints[:, [0], :],
+                    self.male_body_model(
+                        betas=params["shape"][gender_male_mask, [0], :10],
+                    ).joints[:, [0], :],  # only use first 10 betas
                 ),
                 dim=1,
             )
-            if cam_rotation is not None
-            else None
-        )
+            female_pelvis = torch.cat(
+                (
+                    self.female_body_model(
+                        betas=params["shape"][gender_female_mask, [0], :10],
+                    ).joints[:, [0], :],  # only use first 10 betas
+                ),
+                dim=1,
+            )
+            
+            bs = male_pelvis.shape[0] + female_pelvis.shape[0]
+            pelvis = torch.ones((bs,) + male_pelvis.shape[1:], dtype=male_pelvis.dtype, device=male_pelvis.device)
+            pelvis[gender_male_mask] = male_pelvis
+            pelvis[gender_female_mask] = female_pelvis # B, 1, N_j, 3
 
         if relative_transl:
             transl = params["transl"]
@@ -390,7 +420,7 @@ class TrainModule(nn.Module):
 
         return params
 
-    def cast_smpl(self, params):
+    def cast_smpl(self, params, gender):
         """ Bring SMPL parameters to the correct format. 
         params: dict of SMPL parameters, with keys: (orient, pose, shape, transl)
                 of dims (bs, nh, (3, 63, 11, 3))
@@ -409,18 +439,34 @@ class TrainModule(nn.Module):
         orient, cam_rotation = self.prep_global_orient(
             concat_orient, rotrep, relative=relative_orient
         )
-        pelvis = (
-            torch.cat(
+        
+        gender_male_mask = gender[:, 0] == 1
+        gender_female_mask = gender[:, 1] == 1
+
+        pelvis = None
+        if cam_rotation is not None:
+            male_pelvis = torch.cat(
                 (
-                    self.body_model(
-                        betas=params["shape"][:, [0], :10],
+                    self.male_body_model(
+                        betas=params["shape"][gender_male_mask, [0], :10],
                     ).joints[:, [0], :],  # only use first 10 betas
                 ),
                 dim=1,
             )
-            if cam_rotation is not None
-            else None
-        )  # B, 1, N_j, 3
+            female_pelvis = torch.cat(
+                (
+                    self.female_body_model(
+                        betas=params["shape"][gender_female_mask, [0], :10],
+                    ).joints[:, [0], :],  # only use first 10 betas
+                ),
+                dim=1,
+            )
+            
+            bs = male_pelvis.shape[0] + female_pelvis.shape[0]
+            pelvis = torch.ones((bs,) + male_pelvis.shape[1:], dtype=male_pelvis.dtype, device=male_pelvis.device)
+            pelvis[gender_male_mask] = male_pelvis
+            pelvis[gender_female_mask] = female_pelvis # B, 1, N_j, 3
+ 
         transl = self.prep_translation(
             concat_transl,
             relative=relative_transl,
@@ -485,7 +531,8 @@ class TrainModule(nn.Module):
         null_value = 0.0
 
         if self.is_full_bev_guidance:
-            guidance = self.cast_smpl(self.preprocess_batch(batch, in_data='bev', clone=clone))
+            gender = batch['gender'][:, 0]  # B, 2
+            guidance = self.cast_smpl(self.preprocess_batch(batch, in_data='bev', clone=clone), gender)
             guidance = self.split_humans(guidance)
         elif len(guidance_params) == 0:
             pass
@@ -953,7 +1000,7 @@ class TrainModule(nn.Module):
         else:
             return x_ts, x_starts
 
-    def diffuse_denoise(self, x, y, t, obj, noise=None, return_latent_vec=False):
+    def diffuse_denoise(self, x, y, t, obj, gender, noise=None, return_latent_vec=False):
         """Add noise to input and forward through diffusion model."""
 
         # add noise to params
@@ -962,11 +1009,11 @@ class TrainModule(nn.Module):
         for pp, v in x.items():
             input_noise[pp] = torch.randn_like(v) if noise is None else noise[pp]
             diffused_params[pp] = self.diffusion.q_sample(v, t, input_noise[pp])
-        diffused_smpls = self.get_smpl(diffused_params)
+        diffused_smpls = self.get_smpl(diffused_params, gender)
 
         # merge input parameters with guidance (only used for visualization)        
         diffused_with_guidance_params = self.merge_params(diffused_params, y)
-        diffused_with_guidance_smpls = self.get_smpl(diffused_with_guidance_params)
+        diffused_with_guidance_smpls = self.get_smpl(diffused_with_guidance_params, gender)
 
 
         # forward model / transformer
@@ -975,6 +1022,7 @@ class TrainModule(nn.Module):
             x=x,  # diffused_tokens_dict,
             timesteps=self.diffusion._scale_timesteps(t),
             guidance=y,
+            gender=gender,
             obj=obj,
             return_latent_vec=return_latent_vec,
         )
@@ -998,7 +1046,7 @@ class TrainModule(nn.Module):
 
         # predicted tokens to params and smpl bodies
         denoised_params = self.concat_humans(denoised_tokens)
-        denoised_smpls = self.get_smpl(denoised_params)
+        denoised_smpls = self.get_smpl(denoised_params, gender)
 
         return {
             "denoised_params": denoised_params,
@@ -1020,18 +1068,21 @@ class TrainModule(nn.Module):
         # Get obj embeddings
         obj_embeddings = batch['obj_embeddings'][:, 0]  # B, 256
 
+        # Get gender of the human
+        gender = batch['gender'][:, 0]  # B, 2
+
         # overwrite batch with corret input
-        batch = self.cast_smpl(self.preprocess_batch(batch))
+        batch = self.cast_smpl(self.preprocess_batch(batch), gender)
 
         # target / gt params
         # target_params = self.get_gt_params(batch)
-        target_smpls = self.get_smpl(batch)
+        target_smpls = self.get_smpl(batch, gender)
 
         # sample t
         t, weights = self.schedule_sampler.sample(self.bs, "cuda")
 
         # diffusion forward (add noise) and backward (remove noise) process
-        diffusion_output = self.diffuse_denoise(x=batch, y=guidance_params, t=t, obj=obj_embeddings)
+        diffusion_output = self.diffuse_denoise(x=batch, y=guidance_params, t=t, obj=obj_embeddings, gender=gender)
 
         # compute custom loss for diffusion model predicting x_start
         if self.diffusion.model_mean_type == "start_x":

@@ -3,6 +3,7 @@ import smplx
 from llib_rho.bodymodels.build_smpl_family import smpl_cfg_to_args
 from .utils import *
 from llib_rho.bodymodels.smplx_ours import SMPLX_Ours
+from llib_rho.bodymodels.smplh_ours import SMPLH_Ours
 
 def build_joint_mapper(joint_mapper_type, joint_mapper_cfg):
     """ 
@@ -68,7 +69,17 @@ def build_bodymodel(
             mt = smpl_args.pop('model_type')
             mp = smpl_args.pop('model_path')
             smpl_args['model_path'] = osp.join(mp, mt)
-            body_model = SMPLX_Ours(**smpl_args).to(device)
+            if bodymodel_type == 'smplx':
+                # Same male and female body model as we load neutral body model here.
+                body_model = [SMPLX_Ours(**smpl_args).to(device)]*2
+            elif bodymodel_type == 'smplh':
+                smpl_args['gender'] = 'male'
+                male_body_model = SMPLH_Ours(**smpl_args).to(device)
+                smpl_args['gender'] = 'female'
+                female_body_model = SMPLH_Ours(**smpl_args).to(device)
+                body_model = [male_body_model, female_body_model]
+            else:
+                raise NotImplementedError   
         else:
             raise NotImplementedError
     else:
