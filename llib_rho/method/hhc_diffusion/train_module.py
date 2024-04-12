@@ -114,13 +114,15 @@ class TrainModule(nn.Module):
 
         self.orient_dim = 6 if self.exp_cfg.rotrep == "sixd" else 3
         self.pose_dim = 21 * 6 if self.exp_cfg.rotrep == "sixd" else 21 * 3
-        self.shape_dim = 11
+        self.shape_dim = 10
         self.transl_dim = 3
         self.orient_obj_dim = 6 if self.exp_cfg.rotrep == "sixd" else 3
         self.transl_obj_dim = 3 
-        self.obj_mesh = train_dataset.mesh
-        self.obj_vertices = torch.from_numpy(self.obj_mesh.vertices.astype(np.float32)).to(self.cfg.device)
-        self.obj_faces = torch.from_numpy(self.obj_mesh.faces.astype(np.float32)).to(self.cfg.device)
+
+        if train_dataset is not None:
+            self.obj_mesh = train_dataset.mesh
+            self.obj_vertices = torch.from_numpy(self.obj_mesh.vertices.astype(np.float32)).to(self.cfg.device)
+            self.obj_faces = torch.from_numpy(self.obj_mesh.faces.astype(np.float32)).to(self.cfg.device)
 
     def checks(self):
         # 1) check if probs are set correclty for guidance random noise
@@ -588,50 +590,50 @@ class TrainModule(nn.Module):
             out.update({pp: value})
         return out
 
-    def sampling_loop(self, x, y, ts, inpaint=None, log_steps=1, return_latent_vec=False, eta=1.0):
+    def sampling_loop(self, x, y, ts, obj, obj_vertices, gender, inpaint=None, log_steps=1, return_latent_vec=False, eta=1.0):
         """Sample from diffusion model."""
 
-        sbs = x[0].body_pose.shape[0]
+        sbs = x['orient_h0'].shape[0]
         x_ts, x_starts, x_latent = {}, {}, {}  # x_ts is mesh with noise, x_starts the denoised mesh
-
+        obj_ts, obj_starts = {}, {}
         # setup inpaint params if provided 
 
         last_step = ts[-1]
         for ii_idx,  ii in enumerate(ts):
 
-            x = {
-                "orient": torch.cat(
-                    [
-                        axis_angle_to_rotation6d(x[0].global_orient.unsqueeze(1)),
-                        axis_angle_to_rotation6d(x[1].global_orient.unsqueeze(1)),
-                    ],
-                    dim=1,
-                ),
-                "pose": torch.cat(
-                    [
-                        axis_angle_to_rotation6d(
-                            x[0].body_pose.unsqueeze(1).view(sbs, 1, -1, 3)
-                        ).view(sbs, 1, -1),
-                        axis_angle_to_rotation6d(
-                            x[1].body_pose.unsqueeze(1).view(sbs, 1, -1, 3)
-                        ).view(sbs, 1, -1),
-                    ],
-                    dim=1,
-                ),
-                "shape": torch.cat(
-                    [
-                        torch.cat((x[0].betas, x[0].scale), dim=-1).unsqueeze(1),
-                        torch.cat((x[1].betas, x[1].scale), dim=-1).unsqueeze(1),
-                    ],
-                    dim=1,
-                ),
-                "transl": torch.cat(
-                    [
-                        x[0].transl.unsqueeze(1), 
-                        x[1].transl.unsqueeze(1)
-                    ], dim=1
-                ),
-            }
+            # x = {
+            #     "orient": torch.cat(
+            #         [
+            #             axis_angle_to_rotation6d(x[0].global_orient.unsqueeze(1)),
+            #             axis_angle_to_rotation6d(x[1].global_orient.unsqueeze(1)),
+            #         ],
+            #         dim=1,
+            #     ),
+            #     "pose": torch.cat(
+            #         [
+            #             axis_angle_to_rotation6d(
+            #                 x[0].body_pose.unsqueeze(1).view(sbs, 1, -1, 3)
+            #             ).view(sbs, 1, -1),
+            #             axis_angle_to_rotation6d(
+            #                 x[1].body_pose.unsqueeze(1).view(sbs, 1, -1, 3)
+            #             ).view(sbs, 1, -1),
+            #         ],
+            #         dim=1,
+            #     ),
+            #     "shape": torch.cat(
+            #         [
+            #             torch.cat((x[0].betas, x[0].scale), dim=-1).unsqueeze(1),
+            #             torch.cat((x[1].betas, x[1].scale), dim=-1).unsqueeze(1),
+            #         ],
+            #         dim=1,
+            #     ),
+            #     "transl": torch.cat(
+            #         [
+            #             x[0].transl.unsqueeze(1), 
+            #             x[1].transl.unsqueeze(1)
+            #         ], dim=1
+            #     ),
+            # }
 
             if inpaint is not None:
                 for k in inpaint['mask'].keys():
@@ -660,11 +662,13 @@ class TrainModule(nn.Module):
 
 
             # forward model / transformer
-            x = self.split_humans(x)
+            # x = self.split_humans(x)
             pred = self.model(
                 x=x,  # diffused_tokens_dict,
                 timesteps=self.diffusion._scale_timesteps(t),
                 guidance=y,
+                gender=gender,
+                obj=obj,
                 return_latent_vec=return_latent_vec,
             )
 
@@ -673,7 +677,7 @@ class TrainModule(nn.Module):
 
             # predicted tokens to params and smpl bodies
             denoised_params = self.concat_humans(pred)
-            denoised_smpls = self.get_smpl(denoised_params)
+            denoised_smpls = self.get_smpl(denoised_params, gender)
 
             # get q(x_{t-1}| x_t, x_0)
             for k in pred.keys():
@@ -681,20 +685,18 @@ class TrainModule(nn.Module):
                 x[k] = sample
                 input_noise[k] = noise
 
-            input_noise = self.concat_humans(input_noise)
-            x = self.concat_humans(x)
-            x = self.get_smpl(x)
+            diffused_params = self.concat_humans(x)
+            diffused_smpl = self.get_smpl(diffused_params, gender)
+            # x = self.concat_humans(x)
+            # x = self.get_smpl(x)
             #if self.diffusion.model_mean_type == "start_x":
             #    denoised_tokens = pred
 
             diffusion_output = {
-                "denoised_params": denoised_params,
+                "denoised_params": pred,
                 "denoised_smpls": denoised_smpls,
-                "diffused_with_guidance_smpls": x, #diffused_with_guidance_smpls,
-                "diffused_smpls": x,
-                "gt_noise": input_noise,
-                "model_prediction": pred,
-                'model_latent_vec': latent_vec if return_latent_vec else None,
+                "diffused_params": x,
+                "diffused_smpls": diffused_smpl,
             }
 
             # update x_start_tokens
@@ -705,6 +707,17 @@ class TrainModule(nn.Module):
                 x_ts[ii] = diffusion_output["diffused_smpls"]
                 x_starts[ii] = diffusion_output["denoised_smpls"]
                 
+                # diffused object vertices
+                rot = rotation_6d_to_matrix(diffusion_output['diffused_params']['orient_obj'])
+                new_postion = obj_vertices[None, :, :] @ rot.transpose(0, 1) + diffusion_output['diffused_params']['transl_obj'][:, None, :]
+                obj_ts[ii] = new_postion
+
+                # denoised object vertices
+                rot = rotation_6d_to_matrix(diffusion_output['denoised_params']['orient_obj'])
+                new_postion = obj_vertices[None, :, :] @ rot.transpose(0, 1) + diffusion_output['denoised_params']['transl_obj'][:, None, :]
+                obj_starts[ii] = new_postion
+                
+
                 if return_latent_vec:
                     x_latent[ii] = diffusion_output["model_latent_vec"]
 
@@ -712,10 +725,20 @@ class TrainModule(nn.Module):
                 x_starts["final"] = diffusion_output["denoised_smpls"]
                 x_ts["final"] = diffusion_output["diffused_smpls"]
 
+                # diffused object vertices
+                rot = rotation_6d_to_matrix(diffusion_output['diffused_params']['orient_obj'])
+                new_postion = obj_vertices[None, :, :] @ rot.transpose(1, 2) + diffusion_output['diffused_params']['transl_obj'][:, None, :]
+                obj_ts['final'] = new_postion
+
+                # denoised object vertices
+                rot = rotation_6d_to_matrix(diffusion_output['denoised_params']['orient_obj'])
+                new_postion = obj_vertices[None, :, :] @ rot.transpose(1, 2) + diffusion_output['denoised_params']['transl_obj'][:, None, :]
+                obj_starts['final'] = new_postion
+
         if return_latent_vec:
-            return x_ts, x_starts, x_latent
+            return x_ts, x_starts, obj_ts, obj_starts, x_latent
         else:
-            return x_ts, x_starts
+            return x_ts, x_starts, obj_starts, obj_ts
 
 
     def sampling_loop_orig(self, x, y, ts, inpaint=None, log_steps=1, return_latent_vec=False):

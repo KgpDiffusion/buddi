@@ -1,4 +1,4 @@
-batch_size: 32
+batch_size: 128
 device: cuda
 logging:
   base_folder: demo/buddi/training/
@@ -97,14 +97,14 @@ model:
         d1_aggregation: sum
       pseudogt_obj_pose:
         type: l2
-        weight: [10.0]
+        weight: [20.0]
         squared: true
         translated: false
         weighted: false
         d1_aggregation: sum
       pseudogt_obj_transl:
         type: l2
-        weight: [1.0]
+        weight: [2.0]
         squared: true
         translated: false
         weighted: false

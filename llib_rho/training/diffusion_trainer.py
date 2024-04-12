@@ -204,7 +204,7 @@ class Trainer(nn.Module):
             shuffle=True, # suffling is done in data class
             num_workers=self.train_cfg.num_workers,
             pin_memory=self.train_cfg.pin_memory,
-            drop_last=False, # was false for bs 64
+            drop_last=True, # was false for bs 64
         )
         
         # skip first batches if batch_idx is not 0

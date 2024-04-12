@@ -91,20 +91,20 @@ class PyRenderer(object):
         for node in self.mesh_nodes:
             node.mesh.is_visible = vis
 
-    def update_meshes(self, verts, faces, colors=None, smooth=True):
+    def update_meshes(self, verts, faces, verts_obj, faces_obj, colors=None, smooth=True):
         """
-        :param verts (B, V, 3)
+        :param verts (V, 3)
         :param faces (F, 3)
         :param colors (optional tensor, (B, 3))
         """
         # set the ground origin to be at the min point
-        verts_min = verts.amax(dim=(0, 1))  # (3)
+        verts_min = verts.amax(dim=0)  # (3)
         ground_pose = transform_pyrender(make_4x4_pose(torch.eye(3), verts_min)).numpy()
         self.update_ground_pose(ground_pose)
 
         if colors is None:
-            colors = get_colors()[: len(verts)]  # (B, 3)
-        meshes_t = make_batch_trimesh(verts, faces, colors)
+            colors = get_colors()[:2]
+        meshes_t = make_batch_trimesh(verts, faces, verts_obj, faces_obj, colors)
         meshes = [pyrender.Mesh.from_trimesh(m, smooth=smooth) for m in meshes_t]
 
         # re-use existing mesh nodes
@@ -147,16 +147,17 @@ def get_colors():
     return torch.from_numpy(np.loadtxt(file))
 
 
-def make_batch_trimesh(verts, faces, colors):
+def make_batch_trimesh(verts, faces, verts_obj, faces_obj, colors):
     """
-    :param verts (B, V, 3)
+    :param verts (V, 3)
     :param faces (F, 3)
     :param colors (B, 3)
     """
-    B, V = verts.shape[:2]
-    return [
-        make_trimesh(verts[b], faces, colors[b, None].expand(V, -1)) for b in range(B)
-    ]
+    V = verts.shape[0]
+    V_obj = verts_obj.shape[0]
+    comb_mesh = [make_trimesh(verts, faces, colors[0, None].expand(V, -1)), 
+                 make_trimesh(verts_obj, faces_obj, colors[1, None].expand(V_obj, -1))]
+    return comb_mesh
 
 
 def make_trimesh(verts, faces, color=None, yup=True):

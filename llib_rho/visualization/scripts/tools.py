@@ -87,9 +87,13 @@ def get_spiral_poses(num_poses, elev_min=0, elev_max=0, num_reps=2, dist=2, **kw
     return make_4x4_pose(rots, trans)
 
 
-def render_360_views(renderer, verts, faces, num_poses=30, **kwargs):
-    verts = verts - verts.mean((0, 1))
-    renderer.update_meshes(verts, faces)
+def render_360_views(renderer, verts, faces, verts_obj, faces_obj, num_poses=30, **kwargs):
+    # verts: V, 3
+    # verts_obj: V_obj, 3
+    verts_mean = verts.mean(0)
+    verts = verts - verts_mean[None, :]
+    verts_obj = verts_obj - verts_mean[None, :]
+    renderer.update_meshes(verts, faces, verts_obj, faces_obj)
 
     cam_poses = get_spiral_poses(num_poses, **kwargs)
 
