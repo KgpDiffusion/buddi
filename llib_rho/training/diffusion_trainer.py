@@ -255,28 +255,68 @@ class Trainer(nn.Module):
                 guru.info(f'Add train summary ({self.epoch}/{self.max_epochs} epochs; {self.steps} steps) ...')
 
                 if 'images' in output.keys():
-                    self.add_summary_images(output['images'], split='train', max_images=min(4, self.batch_size))
+                    self.add_summary_images(output['images'], split='train', max_images=min(8, self.batch_size))
                 for name, values in self.histograms.items(): # add histograms
                     if len(values) > 0:
                         # self.logger.tsw.add_histogram(name, torch.cat(values, dim=0), self.steps)
                         self.logger.log('histogram', name, torch.cat(values, dim=0), self.steps)
                         self.histograms[name] = []
 
-            # validate and save checkpoint
-            if self.checkpoint_steps > 0 and self.steps % self.checkpoint_steps == 0:
-
                 guru.info(f'Run validation ({self.epoch}/{self.max_epochs} epochs; {self.steps} steps) ...')
 
-                # ckpt_metric = self.validate()
+                self.validate()
                 # val_output = self.train_module.evaluator.tb_output
 
-                # save validation images
-                # if val_output is not None:
-                    # self.add_summary_images(val_output['images'], split='val', max_images=min(12, self.batch_size))
-
+            # validate and save checkpoint
+            if self.checkpoint_steps > 0 and self.steps % self.checkpoint_steps == 0:
                 # save checkpoint
                 self.logger.save_checkpoint(self.train_module, self.optimizers_dict,
                     self.epoch, batch_idx+1, self.batch_size, self.steps)
+                
+    @torch.no_grad()
+    def validate(self, is_training=True):
+        """Validate all datasets."""
+
+        # set model to evaluation mode
+        self.train_module.eval()
+        drop_last = True if is_training else False
+
+        if self.train_module.val_ds is not None:
+
+            self.train_module.evaluator.reset()
+
+            # load validation datasets
+            val_loader = DataLoader(
+                self.train_module.val_ds,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.train_cfg.num_workers,
+                pin_memory=self.train_cfg.pin_memory,
+                drop_last=drop_last
+            )
+
+            # validate
+            for batch_idx, batch in enumerate(val_loader):
+                batch = self.dict_to_device(batch)
+                self.train_module.single_validation_step(batch, batch_idx)
+
+            self.train_module.evaluator.final_accumulate_step()
+
+            if is_training:
+                for k, v in self.train_module.evaluator.accumulator.items():
+                    self.logger.log('scalar', f'val/{k}', v, self.steps)
+
+                val_tb_output = self.train_module.evaluator.tb_output
+                if val_tb_output is not None:
+                    # render_per_ds = {f'{val_ds_name}_{k}': v for k, v in val_tb_output['images'].items()}
+                    self.add_summary_images(
+                        val_tb_output['images'], 
+                        split='val', 
+                        max_images=min(8, self.batch_size),
+                    )
+
+        if is_training:            
+            self.train_module.train()
 
     def add_summary_images(self, output, split='train', max_images=32, ds_name=''):
         """Write summary to Tensorboard."""

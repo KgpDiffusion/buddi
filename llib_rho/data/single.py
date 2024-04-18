@@ -86,12 +86,20 @@ class SingleDataset(Dataset):
         
 
     def load_data(self):
-        dataset, mesh = Behave(
-            **self.dataset_cfg, 
-            split=self.split,
-            body_model_type=self.body_model_type
-        ).load()
-        self.mesh = mesh
+        if self.split == 'train':
+            dataset, mesh_v, mesh_f = Behave(
+                **self.dataset_cfg, 
+                split=self.split,
+                body_model_type=self.body_model_type
+            ).load()
+            self.mesh_vertices = mesh_v
+            self.mesh_faces = mesh_f
+        else:
+            dataset = Behave(
+                **self.dataset_cfg, 
+                split=self.split,
+                body_model_type=self.body_model_type
+            ).load()
         return dataset
     
     def to_tensors(self, target):

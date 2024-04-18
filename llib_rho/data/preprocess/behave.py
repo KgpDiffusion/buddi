@@ -9,6 +9,7 @@ import math
 import pickle
 import trimesh
 from tqdm import tqdm
+import random 
 
 from llib_rho.cameras.perspective import PerspectiveCamera
 from llib_rho.bodymodels.utils import smpl_to_openpose
@@ -70,16 +71,23 @@ class Behave():
         self.meta_data = pickle.load(open(meta_data_path, 'rb'))
 
         self.obj_embeddings = {}
-        obj_embeddings = np.load(os.path.join(data_folder, split, 'obj_embeddings.npy'), allow_pickle=True)
+        obj_embeddings = np.load(os.path.join(data_folder, 'obj_embeddings.npy'), allow_pickle=True)
         for key in obj_embeddings.item().keys():
             self.obj_embeddings[key] = np.expand_dims(obj_embeddings.item()[key], axis=0).astype(np.float32)
 
-        with open(os.path.join(data_folder, split, "ref_hoi.pkl"), "rb") as f:
-            x = pickle.load(f)
-            data = x['templates']['chairblack']
-            verts = data['verts']
-            faces = data['faces']
-            self.mesh = trimesh.Trimesh(vertices=verts, faces=faces)
+        if split == 'train':
+            self.mesh_vertices = {}
+            self.mesh_faces = {}
+            with open(os.path.join(data_folder, "ref_hoi.pkl"), "rb") as f:
+                x = pickle.load(f)
+                for obj_name in x['templates'].keys():
+                    if 'obj' in obj_name[:4]:
+                        continue
+                    data = x['templates'][obj_name]
+                    verts = data['verts']
+                    faces = data['faces']
+                    self.mesh_vertices[obj_name] = verts
+                    self.mesh_faces[obj_name] = faces
 
         self.gender_one_hot = {}
         self.gender_one_hot['male'] = np.array([[1, 0]], dtype=np.float32)
@@ -199,17 +207,17 @@ class Behave():
     def load_single_image(self, imgname):
         img_path = osp.join(self.image_folder, f'{imgname}')
         bev_path = osp.join(self.bev_folder, f'{imgname[:-4]}.npz')
-        vitpose_path = osp.join(self.vitpose_folder, f'{imgname[:-4]}_keypoints.json')
-        openpose_path = osp.join(self.openpose_folder, f'{imgname[:-4]}.json')
+        # vitpose_path = osp.join(self.vitpose_folder, f'{imgname[:-4]}_keypoints.json')
+        # openpose_path = osp.join(self.openpose_folder, f'{imgname[:-4]}.json')
 
         img = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
-        bev_data = np.load(bev_path, allow_pickle=True)['results'][()]
-        vitpose_data = json.load(open(vitpose_path, 'r'))['people']
-        if not os.path.exists(openpose_path):
-            guru.warning(f'Openpose file does not exist; using ViTPose keypoints only.')
-            op_data = vitpose_data
-        else:
-            op_data = json.load(open(openpose_path, 'r'))['people']
+        # bev_data = np.load(bev_path, allow_pickle=True)['results'][()]
+        # vitpose_data = json.load(open(vitpose_path, 'r'))['people']
+        # if not os.path.exists(openpose_path):
+        #     guru.warning(f'Openpose file does not exist; using ViTPose keypoints only.')
+        #     op_data = vitpose_data
+        # else:
+        #     op_data = json.load(open(openpose_path, 'r'))['people']
 
         height, width = img.shape[:2]
         # camera translation was already applied to mesh, so we can set it to zero.
@@ -223,7 +231,7 @@ class Behave():
         image_data_template = {
             'imgname': imgname,
             'imgpath': img_path,
-            'image': img,
+            # 'image': img,
             'img_height': height,
             'img_width': width,
             'cam_transl': cam_transl,
@@ -237,43 +245,45 @@ class Behave():
         image_data_template['gender'] = self.gender_one_hot[gender] # 1, 2
 
         human_idx = 0 # We only have one human in our data
-        human_data = self.process_bev(human_idx, bev_data, (height, width), gender)
+        #human_data = self.process_bev(human_idx, bev_data, (height, width), gender)
+        human_data = {}
 
         # get obj name and corresponding embeddings
         obj_name = self.meta_data[imgname[:-4]][1]
         obj_embeddings = self.obj_embeddings[obj_name]
+        image_data_template['obj_name'] = obj_name
         image_data_template['obj_embeddings'] = obj_embeddings  # 1, 256
 
-        # process OpenPose keypoints
-        kpts = op_data[human_idx]
-        # body + hands
-        body = np.array(kpts['pose_keypoints_2d'] + \
-            kpts['hand_left_keypoints_2d'] + kpts['hand_right_keypoints_2d']
-        ).reshape(-1,3)
-        # face 
-        face = np.array(kpts['face_keypoints_2d'],
-            dtype=np.float32).reshape([-1, 3])[17: 17 + 51, :]
-        contour = np.array(kpts['face_keypoints_2d'],
-            dtype=np.float32).reshape([-1, 3])[:17, :]
-        # final openpose
-        op_kpts = np.expand_dims(np.concatenate([body, face, contour], axis=0), axis=0)  # 1, 135, 3
+        # # process OpenPose keypoints
+        # kpts = op_data[human_idx]
+        # # body + hands
+        # body = np.array(kpts['pose_keypoints_2d'] + \
+        #     kpts['hand_left_keypoints_2d'] + kpts['hand_right_keypoints_2d']
+        # ).reshape(-1,3)
+        # # face 
+        # face = np.array(kpts['face_keypoints_2d'],
+        #     dtype=np.float32).reshape([-1, 3])[17: 17 + 51, :]
+        # contour = np.array(kpts['face_keypoints_2d'],
+        #     dtype=np.float32).reshape([-1, 3])[:17, :]
+        # # final openpose
+        # op_kpts = np.expand_dims(np.concatenate([body, face, contour], axis=0), axis=0)  # 1, 135, 3
 
-        # process Vitpose keypoints
-        kpts = vitpose_data[human_idx]
-        # body + hands
-        body = np.array(kpts['pose_keypoints_2d'] + \
-            kpts['hand_left_keypoints_2d'] + kpts['hand_right_keypoints_2d']
-        ).reshape(-1,3)
-        # face 
-        face = np.array(kpts['face_keypoints_2d'],
-            dtype=np.float32).reshape([-1, 3])[17: 17 + 51, :]
-        contour = np.array(kpts['face_keypoints_2d'],
-            dtype=np.float32).reshape([-1, 3])[:17, :]
-        # final openpose
-        vitpose_kpts = np.expand_dims(np.concatenate([body, face, contour], axis=0), axis=0)  # 1, 135, 3
+        # # process Vitpose keypoints
+        # kpts = vitpose_data[human_idx]
+        # # body + hands
+        # body = np.array(kpts['pose_keypoints_2d'] + \
+        #     kpts['hand_left_keypoints_2d'] + kpts['hand_right_keypoints_2d']
+        # ).reshape(-1,3)
+        # # face 
+        # face = np.array(kpts['face_keypoints_2d'],
+        #     dtype=np.float32).reshape([-1, 3])[17: 17 + 51, :]
+        # contour = np.array(kpts['face_keypoints_2d'],
+        #     dtype=np.float32).reshape([-1, 3])[:17, :]
+        # # final openpose
+        # vitpose_kpts = np.expand_dims(np.concatenate([body, face, contour], axis=0), axis=0)  # 1, 135, 3
 
-        human_data['vitpose'] = vitpose_kpts
-        human_data['openpose'] = op_kpts
+        # human_data['vitpose'] = vitpose_kpts
+        # human_data['openpose'] = op_kpts
         # for k, v in human_data.items():
 
         #     # if k in [
@@ -308,4 +318,7 @@ class Behave():
         for imgname in tqdm(self.imgnames):
             img_data = self.load_single_image(imgname)
             data.append(img_data)
-        return data, self.mesh
+        if self.split == 'train':
+            return data, self.mesh_vertices, self.mesh_faces
+        else:
+            return data

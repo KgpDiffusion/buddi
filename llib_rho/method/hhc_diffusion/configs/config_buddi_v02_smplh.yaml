@@ -1,4 +1,4 @@
-batch_size: 128
+batch_size: 512
 device: cuda
 logging:
   base_folder: demo/buddi/training/
@@ -17,7 +17,7 @@ datasets:
   train_composition: [1.0]
   val_names: ['behave']
   behave:
-    data_folder: /home/shubhikg/data_subset
+    data_folder: /home/shubhikg/data
     pseudogt_folder: gt
   augmentation:
     use: false
@@ -129,9 +129,4 @@ body_model:
           use_face_contour: false
           openpose_format: coco25
 evaluation:
-  metrics: ['v2v', 'mpjpe', 'pa_mpjpe', 'pairwise_pa_mpjpe']
-  generative_metrics: ['gen_diversity', 'gen_fid', 'gen_contact_and_isect', 'gen_tsne']
-  num_samples: 512
-  gen_fid:
-    fid_model_path: ''
-    fid_model_cfg: ''
+  metrics: ['v2v', 'mpjpe', 'pa_mpjpe', 'pairwise_pa_chamfer']

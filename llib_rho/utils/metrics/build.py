@@ -1,22 +1,11 @@
 from llib_rho.utils.metrics.alignment import * 
 from llib_rho.utils.metrics.points import PointError
-from llib_rho.utils.metrics.contact import ContactMapDistError, ContactIOU
-from llib_rho.utils.metrics.diffusion import GenDiversity, GenFID, GenContactIsect, tSNE
+from llib_rho.utils.metrics.chamfer import ChamferError
 
 def build_metric(cfg):
     if cfg.name == 'PointError':
         return PointError(**cfg)
-    elif cfg.name == 'ContactMapDistError':
-        return ContactMapDistError(**cfg)
-    elif cfg.name == 'ContactIOU':
-        return ContactIOU(**cfg)
-    elif cfg.name == 'GenDiversity':
-        return GenDiversity(**cfg)
-    elif cfg.name == 'GenFID':
-        return GenFID(**cfg)
-    elif cfg.name == 'GenContactIsect':
-        return GenContactIsect(**cfg)
-    elif cfg.name == 'GentSNE':
-        return tSNE(**cfg)
+    if cfg.name == 'ChamferError':
+        return ChamferError(**cfg)
     else:
         raise ValueError(f'Unknown metric type: {cfg.name}')

@@ -52,7 +52,7 @@ class ProcrustesAlignment(object):
         where R is an 3x3 rotation matrix, t 3x1 translation, s scale.
         i.e. solves the orthogonal Procrustes problem.
         '''
-        if len(S1.shape) < 2:
+        if len(S1.shape) <= 2:
             S1 = S1.reshape(1, *S1.shape)
             S2 = S2.reshape(1, *S2.shape)
 

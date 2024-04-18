@@ -26,7 +26,7 @@ from llib_rho.defaults.main import (
 )
 
 from .train_module import TrainModule
-# from eval_module import EvalModule
+from .eval_module import EvalModule
 
 import torch
 torch.autograd.set_detect_anomaly(True)
@@ -63,7 +63,7 @@ def train(cfg):
     train_dataset, val_dataset = build_datasets(
         datasets_cfg=cfg.datasets,
         body_model_type=cfg.body_model.type, # necessary to load the correct contact maps
-        build_val=False
+        build_val=True
     )
     
     # build regressor used to predict diffusion params
@@ -81,12 +81,10 @@ def train(cfg):
     )
 
     # create validation/ evaluation metrics
-    # evaluator = EvalModule(
-    #     eval_cfgs = cfg.evaluation,
-    #     body_model_type = cfg.body_model.type,
-    # ).to(cfg.device)
-
-    evaluator = None
+    evaluator = EvalModule(
+        eval_cfgs = cfg.evaluation,
+        body_model_type = cfg.body_model.type,
+    ).to(cfg.device)
 
     # create optimizer
     optimizer = build_optimizer(
