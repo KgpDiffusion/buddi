@@ -52,7 +52,7 @@ class Behave():
         self.body_model_type = body_model_type
 
         self.image_folder = osp.join(self.data_folder, self.split, image_folder)
-        self.mask_folder = osp.join(self.data_folder, self.split, 'masks')
+        self.cropped_image_folder = osp.join(self.data_folder, self.split, 'cropped_images')
         self.openpose_folder = osp.join(self.data_folder, self.split, openpose_folder)
         self.bev_folder = osp.join(self.data_folder, self.split, bev_folder)
         self.vitpose_folder = osp.join(self.data_folder, self.split, vitpose_folder)
@@ -72,7 +72,7 @@ class Behave():
         # Initialize pretrained resnet 18
         self.resnet18 = models.resnet18(pretrained=True)
         self.resnet18 = nn.Sequential(*list(self.resnet18.children())[:-1])
-        self.resnet18.eval() # freeze the model
+        self.resnet18.train() # freeze the model
 
         meta_data_path = os.path.join(data_folder, split, 'metadata.pkl')
         self.meta_data = pickle.load(open(meta_data_path, 'rb'))
@@ -211,37 +211,15 @@ class Behave():
 
         return data
     
-    def preprocess_image(self, img: np.ndarray, mask:np.ndarray, INFLATION_RATIO:float=1.2):
+    def preprocess_image(self, img_cropped: np.ndarray):
         """ Preprocess image for ResNet18.
-         1. Fit a rectangle around the mask
-         2. Crop image around rectangle with some scale and inflation
-         3. Resize image to 224x224
+            1. Apply transforms to cropped image
          
          Returns torch.Tensor of shape (3, 224, 224)"""
         
         INPUT_IMG_SIZE = 224
 
-        mask = mask.astype(np.uint8)
-        x,y,w,h = cv2.boundingRect(mask)
-        x_c, y_c = x + w//2, y + h//2
-
-        dim = min(w,h)
-        scale = INPUT_IMG_SIZE / dim
-        if(w>h):
-            w = scale * w * INFLATION_RATIO
-            h = INPUT_IMG_SIZE * INFLATION_RATIO
-        else:
-            h = scale * h * INFLATION_RATIO
-            w = INPUT_IMG_SIZE * INFLATION_RATIO
-        
-        # sanity check
-        xmin = max(0, int(x_c - w//2))
-        ymin = max(0, int(y_c - h//2))
-        xmax = min(img.shape[1], int(x_c + w//2))
-        ymax = min(img.shape[0], int(y_c + h//2))
-
-        img_cropped = img[ymin:ymax, xmin:xmax]
-        img_cropped = img_cropped.resize((INPUT_IMG_SIZE, INPUT_IMG_SIZE))
+        assert img_cropped.shape == (INPUT_IMG_SIZE, INPUT_IMG_SIZE, 3), f"Image shape is {img_cropped.shape}"
 
         # torchvision transforms
         transforms = torchvision.transforms.Compose([
@@ -256,20 +234,17 @@ class Behave():
     def load_single_image(self, imgname):
         imgID = os.path.basename(imgname)
         img_path = osp.join(self.image_folder, f'{imgname}')
-        mask_obj_path = osp.join(self.mask_folder, f'{imgID}_obj.png')
-        mask_human_path = osp.join(self.mask_folder, f'{imgID}_hum.png')
+        img_cropped_path = osp.join(self.cropped_image_folder, f'{imgname}')
 
         bev_path = osp.join(self.bev_folder, f'{imgname[:-4]}.npz')
         # vitpose_path = osp.join(self.vitpose_folder, f'{imgname[:-4]}_keypoints.json')
         # openpose_path = osp.join(self.openpose_folder, f'{imgname[:-4]}.json')
 
         img = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
-        mask_obj = cv2.imread(mask_obj_path, cv2.IMREAD_GRAYSCALE)
-        mask_human = cv2.imread(mask_human_path, cv2.IMREAD_GRAYSCALE)
-        mask_combined = np.maximum(mask_obj, mask_human)
+        img_cropped = cv2.cvtColor(cv2.imread(img_cropped_path), cv2.COLOR_BGR2RGB)
 
         # preprocess image for resnet
-        input_resnet = self.preprocess(img, mask_combined) # 224, 224, 3 tensor
+        input_resnet = self.preprocess_image(img_cropped) # 224, 224, 3 tensor
         resnet_feat = self.resnet18(input_resnet.unsqueeze(0))
         assert resnet_feat.shape == (1, 512), f"Resnet feature shape is {resnet_feat.shape}"
 
