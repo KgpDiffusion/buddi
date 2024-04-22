@@ -77,13 +77,12 @@ class TrainModule(nn.Module):
 
 
         self.meshes_to_render = {
-            # 'single_step_random_t': ["input", "input_noise", "input_with_guidance","sampled_0"],
-            'single_step_random_t': ["input", "input_noise", "sampled_0"],
+            'single_step_random_t': ["input", "input_noise", "input_with_guidance","sampled_0"],
             'single_step_25_t': ["input", "input_noise", "input_with_guidance", "sampled_0"],
-            'single_step_50_t': ["input", "input_noise", "sampled_0"],
-            'single_step_75_t': ["input", "input_noise", "sampled_0"],
+            'single_step_50_t': ["input", "input_noise", "input_with_guidance", "sampled_0"],
+            'single_step_75_t': ["input", "input_noise", "input_with_guidance", "sampled_0"],
             'unconditional': ['sampled_0'],
-            'conditional': ['sampled_0'],
+            'conditional': ['sampled_0', "input_with_guidance"],
         }
         
         self.meshcols = {
@@ -577,11 +576,14 @@ class TrainModule(nn.Module):
     def merge_params(self, target, update):
         """Merge update into target."""
         out = {}
-        for pp in self.human_params:
+        for pp in target.keys():
             value = target[pp].clone()
-            for ii in range(self.nh):
-                if f"{pp}_h{ii}" in update.keys():
-                    value[:, ii] = update[f"{pp}_h{ii}"]
+            if pp in self.human_params:
+                for ii in range(self.nh):
+                    if f"{pp}_h{ii}" in update.keys():
+                        value[:, ii] = update[f"{pp}_h{ii}"]
+            else:
+                value[:, 0] = update[pp]
             out.update({pp: value})
         return out
 
@@ -1033,6 +1035,7 @@ class TrainModule(nn.Module):
             "denoised_params": denoised_params,
             "denoised_smpls": denoised_smpls,
             "diffused_with_guidance_smpls": diffused_with_guidance_smpls,
+            'diffused_with_guidance_params': diffused_with_guidance_params,
             "diffused_smpls": diffused_smpls,
             "gt_noise": input_noise,
             "model_prediction": pred,
@@ -1093,6 +1096,7 @@ class TrainModule(nn.Module):
         diffused_obj = []
         denoised_obj = []
         target_obj = []
+        diffused_guid_obj = []
 
         for idx in range(bs):
             obj_vertices =  self.obj_vertices[obj_name[idx]]
@@ -1108,27 +1112,32 @@ class TrainModule(nn.Module):
             new_postion = obj_vertices @ rot.transpose(0, 1) + batch['transl_obj'][idx]
             target_obj.append(new_postion)
 
+            guid = diffusion_output['diffused_with_guidance_params']
+            rot = rotation_6d_to_matrix(guid['orient_obj'][idx])[0]
+            new_postion = obj_vertices @ rot.transpose(0, 1) + guid['transl_obj'][idx]
+            diffused_guid_obj.append(new_postion)
+
         # diffused_obj = torch.stack(diffused_obj, dim=0)
         # denoised_obj = torch.stack(denoised_obj, dim=0)
         # target_obj = torch.stack(target_obj, dim=0)
 
         if len(guidance_params) > 0:
-            diffused_output_with_guidance_for_rendering = diffusion_output["diffused_with_guidance_smpls"]
+            diffused_output_with_guidance_for_rendering_smpl = diffusion_output["diffused_with_guidance_smpls"]
         else:
-            diffused_output_with_guidance_for_rendering = None
+            diffused_output_with_guidance_for_rendering_smpl = None
         output_dict = { 
             "images": { 
                 "single_step_random_t": [
                     self.get_tb_image_data(
                         diffusion_output["denoised_smpls"],
                         diffusion_output["diffused_smpls"],
-                        diffused_output_with_guidance_for_rendering,
-                        #diffusion_output["diffused_with_guidance_smpls"],
+                        diffused_output_with_guidance_for_rendering_smpl,
                         target_smpls,
                         0,
                         diffused_obj,
                         denoised_obj,
                         target_obj,
+                        diffused_guid_obj,
                         obj_name
                     ), imglabel]
             }
@@ -1214,7 +1223,7 @@ class TrainModule(nn.Module):
             uncond_ts = np.arange(1, self.diffusion.num_timesteps, 10)[::-1]
             log_freq = 10
             x_ts, x_starts, obj_ts, obj_starts = self.sample_from_model(
-                uncond_ts, log_freq, guidance_params_all_noise, gender, obj_embeddings, obj_vertices 
+                uncond_ts, log_freq, {}, gender, obj_embeddings, obj_vertices 
             )
 
             self.evaluator.tb_output['images']['unconditional'] = [
@@ -1227,6 +1236,7 @@ class TrainModule(nn.Module):
                     None,
                     obj_starts['final'],
                     None,
+                    None,
                     obj_name),
                 ['final_uncond'] * x_starts['final'].vertices.shape[0]]
 
@@ -1235,14 +1245,27 @@ class TrainModule(nn.Module):
                 # guru.info('Start sampling unconditional')
                 cond_ts = np.arange(1, self.diffusion.num_timesteps, 10)[::-1]
                 log_freq = 10
-                x_ts, x_starts = self.sample_from_model(
-                    cond_ts, log_freq, guidance_params_no_noise
+                x_ts, x_starts, obj_ts, obj_starts = self.sample_from_model(
+                    cond_ts, log_freq, guidance_params_no_noise, gender, obj_embeddings, obj_vertices
                 )
-                guidance_params_no_noise_params = self.concat_humans(guidance_params_no_noise) 
-                guidance_params_no_noise_smpls = self.get_smpl(guidance_params_no_noise_params)
+
+                guidance_params_no_noise_params = self.concat_humans(guidance_params_no_noise)
+                for pp in guidance_params_no_noise.keys():
+                    if pp not in guidance_params_no_noise_params:
+                        guidance_params_no_noise_params[pp] = guidance_params_no_noise[pp].unsqueeze(1)
+                guidance_params_no_noise_smpls = self.get_smpl(guidance_params_no_noise_params, gender)
+
+                diffused_guid_obj = []
+                bs = x_starts['final'].vertices.shape[0]
+                for idx in range(bs):
+                    obj_vertices =  self.obj_vertices[obj_name[idx]]
+                    rot = rotation_6d_to_matrix(guidance_params_no_noise_params['orient_obj'][idx])[0]
+                    new_postion = obj_vertices @ rot.transpose(0, 1) + guidance_params_no_noise_params['transl_obj'][idx]
+                    diffused_guid_obj.append(new_postion)
+
                 self.evaluator.tb_output['images']['conditional'] = [
-                    self.get_tb_image_data(x_starts['final'], None, guidance_params_no_noise_smpls, timestep=0),
-                    [''] * len(batch['action_name']),
+                    self.get_tb_image_data(x_starts['final'], None, guidance_params_no_noise_smpls, None, 0, None, obj_starts['final'], None, diffused_guid_obj, obj_name),
+                    ['final_cond'] * bs
                 ]
 
         ############ SAME AS TRAINING STEP ##############
@@ -1285,6 +1308,7 @@ class TrainModule(nn.Module):
             denoised_obj = []
             target_obj = []
             obj_face = []
+            diffused_guid_obj = []
 
             for idx in range(bs):
                 obj_vertices =  self.obj_vertices[obj_name[idx]]
@@ -1300,12 +1324,17 @@ class TrainModule(nn.Module):
                 new_postion = obj_vertices @ rot.transpose(0, 1) + batch['transl_obj'][idx]
                 target_obj.append(new_postion)
 
+                guid = diffusion_output['diffused_with_guidance_params']
+                rot = rotation_6d_to_matrix(guid['orient_obj'][idx])[0]
+                new_postion = obj_vertices @ rot.transpose(0, 1) + guid['transl_obj'][idx]
+                diffused_guid_obj.append(new_postion)                
+
                 obj_face.append(self.obj_faces[obj_name[idx]])
 
             if len(guidance_params_no_noise) > 0:
-                diffused_output_with_guidance_for_rendering = diffusion_output["diffused_with_guidance_smpls"]
+                diffused_output_with_guidance_for_rendering_smpl = diffusion_output["diffused_with_guidance_smpls"]
             else:
-                diffused_output_with_guidance_for_rendering = None
+                diffused_output_with_guidance_for_rendering_smpl = None
 
             # run evaluation
             if t_type == 'single_step_50_t':
@@ -1322,13 +1351,13 @@ class TrainModule(nn.Module):
                         self.get_tb_image_data(
                             diffusion_output["denoised_smpls"],
                             diffusion_output["diffused_smpls"],
-                            diffused_output_with_guidance_for_rendering,
-                            #diffusion_output["diffused_with_guidance_smpls"],
+                            diffused_output_with_guidance_for_rendering_smpl,
                             target_smpls,
                             0,
                             diffused_obj,
                             denoised_obj,
                             target_obj,
+                            diffused_guid_obj,
                             obj_name
                         ),
                         imglabel,
@@ -1340,7 +1369,7 @@ class TrainModule(nn.Module):
     ##############################################################################################
     def get_tb_image_data(
         self, sampled_smpls, input_noise_smpls=None, input_with_guidance=None, input_smpls=None, timestep=0,
-        diffused_obj=None, denoised_obj=None, target_obj=None, obj_name=None,
+        diffused_obj=None, denoised_obj=None, target_obj=None, guid_obj=None, obj_name=None,
     ):
         out = {}
         out[f"h0_sampled_{timestep}"] = sampled_smpls
@@ -1356,6 +1385,8 @@ class TrainModule(nn.Module):
             out[f"obj_input_noise"] = diffused_obj
         if target_obj is not None:
             out[f"obj_input"] = target_obj
+        if guid_obj is not None:
+            out[f"obj_input_with_guidance"] = guid_obj
         if obj_name is not None:
             out["obj_name"] = obj_name
         return out
