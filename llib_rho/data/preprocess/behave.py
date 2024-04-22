@@ -10,7 +10,8 @@ import pickle
 import trimesh
 from tqdm import tqdm
 import random 
-
+import torchvision.models as models
+import torchvision
 from llib_rho.cameras.perspective import PerspectiveCamera
 from llib_rho.bodymodels.utils import smpl_to_openpose
 from loguru import logger as guru
@@ -51,6 +52,7 @@ class Behave():
         self.body_model_type = body_model_type
 
         self.image_folder = osp.join(self.data_folder, self.split, image_folder)
+        self.cropped_image_folder = osp.join(self.data_folder, self.split, 'cropped_images')
         self.openpose_folder = osp.join(self.data_folder, self.split, openpose_folder)
         self.bev_folder = osp.join(self.data_folder, self.split, bev_folder)
         self.vitpose_folder = osp.join(self.data_folder, self.split, vitpose_folder)
@@ -66,6 +68,11 @@ class Behave():
             model_folder = osp.join('essentials', 'body_models')
             self.male_body_model = smplx.create(model_path=model_folder, model_type='smplh', gender='male')
             self.female_body_model = smplx.create(model_path=model_folder, model_type='smplh', gender='female')
+
+        # Initialize pretrained resnet 18
+        self.resnet18 = models.resnet18(pretrained=True)
+        self.resnet18 = nn.Sequential(*list(self.resnet18.children())[:-1])
+        self.resnet18.train() # freeze the model
 
         meta_data_path = os.path.join(data_folder, split, 'metadata.pkl')
         self.meta_data = pickle.load(open(meta_data_path, 'rb'))
@@ -203,13 +210,45 @@ class Behave():
         data.update(smplx_update)
 
         return data
+    
+    def preprocess_image(self, img_cropped: np.ndarray):
+        """ Preprocess image for ResNet18.
+            1. Apply transforms to cropped image
+         
+         Returns torch.Tensor of shape (3, 224, 224)"""
+        
+        INPUT_IMG_SIZE = 224
+
+        assert img_cropped.shape == (INPUT_IMG_SIZE, INPUT_IMG_SIZE, 3), f"Image shape is {img_cropped.shape}"
+
+        # torchvision transforms
+        transforms = torchvision.transforms.Compose([
+            torchvision.transforms.ToTensor(),
+            torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+
+        img_tensor = transforms(img_cropped.permute(2,0,1))
+
+        return img_tensor
 
     def load_single_image(self, imgname):
+        imgID = os.path.basename(imgname)
         img_path = osp.join(self.image_folder, f'{imgname}')
+        img_cropped_path = osp.join(self.cropped_image_folder, f'{imgname}')
+
         bev_path = osp.join(self.bev_folder, f'{imgname[:-4]}.npz')
         # vitpose_path = osp.join(self.vitpose_folder, f'{imgname[:-4]}_keypoints.json')
         # openpose_path = osp.join(self.openpose_folder, f'{imgname[:-4]}.json')
 
+        img = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
+        img_cropped = cv2.cvtColor(cv2.imread(img_cropped_path), cv2.COLOR_BGR2RGB)
+
+        # preprocess image for resnet
+        input_resnet = self.preprocess_image(img_cropped) # 224, 224, 3 tensor
+        resnet_feat = self.resnet18(input_resnet.unsqueeze(0))
+        assert resnet_feat.shape == (1, 512), f"Resnet feature shape is {resnet_feat.shape}"
+
+        # bev_data = np.load(bev_path, allow_pickle=True)['results'][()]
         # img = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
         bev_data = np.load(bev_path, allow_pickle=True)['results'][()]
 
@@ -240,6 +279,7 @@ class Behave():
             'imgname': imgname,
             'imgpath': img_path,
             # 'image': img,
+            'resnet_feat': resnet_feat, # 1, 512
             'img_height': height,
             'img_width': width,
             'cam_transl': cam_transl,
