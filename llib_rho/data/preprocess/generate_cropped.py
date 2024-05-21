@@ -45,25 +45,25 @@ def preprocess_image(img: np.ndarray, mask:np.ndarray, INFLATION_RATIO:float=1.2
 
     return img_cropped
 
-def generate_cropped_images(behave_dir, save_dir_name='cropped_images'):
+def generate_cropped_images(data_dir, save_dir_name='cropped_images'):
     """ Generate cropped images from the original images in the behave dataset."""
 
-    assert os.path.exists(behave_dir), f"{behave_dir} does not exist."
+    assert os.path.exists(data_dir), f"{data_dir} does not exist."
     
     sets = ['train', 'val', 'test']
 
     for set_name in sets:
 
-        if not os.path.exists(os.path.join(behave_dir, set_name)):
-            warnings.warn(f"{os.path.join(behave_dir, set_name)} does not exist. Skipping...")
+        if not os.path.exists(os.path.join(data_dir, set_name)):
+            warnings.warn(f"{os.path.join(data_dir, set_name)} does not exist. Skipping...")
             continue
 
-        img_dir = os.path.join(behave_dir, set_name, 'images')
-        mask_dir = os.path.join(behave_dir, set_name, 'masks')
+        img_dir = os.path.join(data_dir, set_name, 'images')
+        mask_dir = os.path.join(data_dir, set_name, 'masks')
         img_list = [f for f in os.listdir(img_dir) if f.endswith('.jpg')]
 
-        if not os.path.exists(os.path.join(behave_dir, save_dir_name)):
-            os.makedirs(os.path.join(behave_dir, set_name, save_dir_name), exist_ok=True)
+        if not os.path.exists(os.path.join(data_dir, save_dir_name)):
+            os.makedirs(os.path.join(data_dir, set_name, save_dir_name), exist_ok=True)
 
         for idx, img_name in tqdm(enumerate(img_list)):
             
@@ -79,7 +79,7 @@ def generate_cropped_images(behave_dir, save_dir_name='cropped_images'):
             img_cropped = preprocess_image(img, mask_combined)
 
             assert img_cropped.shape == (224, 224, 3), f"Image shape is {img_cropped.shape} instead of (224, 224, 3)."
-            cv2.imwrite(os.path.join(behave_dir, set_name, save_dir_name, img_name), img_cropped)
+            cv2.imwrite(os.path.join(data_dir, set_name, save_dir_name, img_name), img_cropped)
 
         print("Finished cropping {} images for set: {}".format(len(img_list), set_name))
 
@@ -88,8 +88,8 @@ if __name__ == '__main__':
 
     # parse arguments
     parser = ArgumentParser()
-    parser.add_argument('--behave_dir', type=str, default='~/behave/', help='Path to the behave dataset directory containing train/ val/')
+    parser.add_argument('--data_dir', type=str, default='~/behave/', help='Path to the behave dataset directory containing train/ val/')
     args = parser.parse_args()
 
-    assert os.path.exists(args.behave_dir), f"{args.behave_dir} does not exist."
-    generate_cropped_images(args.behave_dir, save_dir_name='cropped_images')
+    assert os.path.exists(args.data_dir), f"{args.data_dir} does not exist."
+    generate_cropped_images(args.data_dir, save_dir_name='cropped_images')

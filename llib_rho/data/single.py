@@ -90,7 +90,8 @@ class SingleDataset(Dataset):
             dataset, mesh_v, mesh_f = Behave(
                 **self.dataset_cfg, 
                 split=self.split,
-                body_model_type=self.body_model_type
+                body_model_type=self.body_model_type,
+                get_mesh=True
             ).load()
             self.mesh_vertices = mesh_v
             self.mesh_faces = mesh_f

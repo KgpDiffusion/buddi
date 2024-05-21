@@ -312,9 +312,15 @@ class TrainModule(nn.Module):
             "transl_obj": batch[f"{prefix}_transl_obj"],
         }
 
+        if 'resnet_feat' in batch.keys() and prefix!= 'pgt':
+            out['resnet_feat'] = batch['resnet_feat']
+
         # clone parameters if clone is true 
         if clone:
-            for pp in ['orient', 'pose', 'shape', 'transl', 'orient_obj', 'transl_obj']:
+            USEFUL_KEYS = ['orient', 'pose', 'shape', 'transl', 'orient_obj', 'transl_obj']
+            if 'resnet_feat' in out.keys() and prefix !='pgt':
+                USEFUL_KEYS.append('resnet_feat')
+            for pp in USEFUL_KEYS:
                 out[pp] = out[pp].clone()
 
         return out
