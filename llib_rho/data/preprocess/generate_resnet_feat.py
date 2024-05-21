@@ -16,7 +16,7 @@ from torch.utils.data import Dataset
 # Set a few constants related to data loading.
 BATCH_SIZE = 128
 NUM_WORKERS = multiprocessing.cpu_count()//2
-PATH = '/home/user/Abhinav/'
+PATH = '/home/ubuntu'
 
 if torch.cuda.is_available():
 	DEVICE = torch.device("cuda")
