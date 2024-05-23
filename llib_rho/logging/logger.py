@@ -48,7 +48,7 @@ class Logger():
             self.tsw = SummaryWriter(log_dir=self.sum_folder) # use tensorboard to monitor training
         elif self.logger_type == 'wandb':
             os.environ["WANDB_SILENT"] = "true"
-            # with open('.wandb/api.txt') as f:
+            print(cfg.logging.wandb_api_key_path)
             with open(cfg.logging.wandb_api_key_path) as f:
                 key = f.readlines()
                 key = key[0].strip('\n')

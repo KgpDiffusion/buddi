@@ -136,17 +136,32 @@ if __name__ == "__main__":
 
     meta_data_path = os.path.join(args.data_path, 'metadata.pkl')
     meta_data = pickle.load(open(meta_data_path, 'rb'))
+
+    # print num keys in metadata
+    print("Number of keys in metadata: ", len(meta_data.keys()))
     height = 1536
     width = 2048
     output_body_model_type = args.output_body_model_type
     shape_converter_smpl = None # ShapeConverter(inbm_type='smpl', outbm_type=output_body_model_type)
 
-    model_folder = osp.join('/home/shubhikg/exp/buddi/essentials', 'body_models')
+    model_folder = osp.join('/home/user/Abhinav/buddi/essentials', 'body_models')
     male_body_model = smplx.create(model_path=model_folder, model_type='smplh', gender='male')
     female_body_model = smplx.create(model_path=model_folder, model_type='smplh', gender='female')
 
     bev_names = os.listdir(input_folder_bev)
+    metadata_names = list(meta_data.keys())
+
+    missing_ids = []
+    for name in bev_names:
+        if name[:-4] not in metadata_names:
+            missing_ids.append(name[:-4])
+
+    print("Num missing ids: ", len(missing_ids))
+
     for name in tqdm(bev_names):
+        # handle missing ids
+        if name[:-4] in missing_ids:
+            continue
         bev_path = osp.join(input_folder_bev, name)
         bev_data = np.load(bev_path, allow_pickle=True)['results'][()]
 

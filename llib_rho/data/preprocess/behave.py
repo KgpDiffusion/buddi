@@ -52,7 +52,7 @@ class Behave():
         for img in os.listdir(os.path.join(data_folder, split, pseudogt_folder)):
             img = img[:-4]
             self.imgnames.append(img + ".jpg")
-        # self.imgnames = random.choices(self.imgnames, k=100)
+        # self.imgnames = random.choices(self.imgnames, k=64)
 
         assert body_model_type in ['smpl', 'smplh', 'smplx'], "Can only handle smpl, smplh and smplx body model."
         self.body_model_type = body_model_type

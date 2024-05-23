@@ -13,6 +13,8 @@ class Behave:
     openpose_folder: str = 'keypoints/openpose'
     vitpose_folder: str = 'keypoints/vitpose'
     vitposeplus_folder: str = 'keypoints/vitposeplus'
+    pose_folder='pose_pred'
+    resnet_folder ='resnet_feat'
     pseudogt_folder: str = 'gt'
     pose_folder: str = 'pose_pred'
     resnet_folder ='resnet_feat'
