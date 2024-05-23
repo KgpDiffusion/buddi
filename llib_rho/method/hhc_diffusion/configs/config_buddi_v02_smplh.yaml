@@ -3,7 +3,7 @@ device: cuda
 logging:
   base_folder: demo/buddi/training/
   run: demo_buddi_v02
-  summaries_freq: 100
+  summaries_freq: 100.0
   checkpoint_freq: 400.0
   logger: 'wandb'
   project_name: 'KgpDiffusion'
@@ -17,7 +17,7 @@ datasets:
   train_composition: [1.0]
   val_names: ['behave']
   behave:
-    data_folder: /home/shubhikg/data
+    data_folder: /home/shubhikg/data_intercap
     pseudogt_folder: gt
     bev_folder: bev_process
   augmentation:
@@ -105,7 +105,7 @@ model:
         d1_aggregation: sum
       pseudogt_obj_transl:
         type: l2
-        weight: [10.0]
+        weight: [30.0]
         squared: true
         translated: false
         weighted: false

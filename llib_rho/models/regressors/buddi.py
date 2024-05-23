@@ -116,7 +116,8 @@ class BUDDI(nn.Module):
         dropout=0.0, 
         embed_guidance_config = {
             'orient_h0': 6, 'pose_h0': 126, 'shape_h0': 10, 'transl_h0': 3,
-            'orient_obj': 6, 'transl_obj': 3 #, 'enc_obj': 256 #, 'cat_obj': 30, # 20+ 10(intercap)
+            'orient_obj': 6, 'transl_obj': 3, #, 'enc_obj': 256 #, 'cat_obj': 30, # 20+ 10(intercap)
+            'resnet_feat': 512
         },
         embed_target_config = {
             'orient_h0': 6, 'pose_h0': 126, 'shape_h0': 10, 'transl_h0': 3,
@@ -247,13 +248,14 @@ class BUDDI(nn.Module):
                 gemb = getattr(self, f'embed_input_{k}')(guidance_param).unsqueeze(1)
             else:
                 gemb = getattr(self, f'embed_guidance_{k}')(guidance_param).unsqueeze(1)
-            gemb = self.add_param_embedding(gemb, k)
+            gemb = self.add_param_embedding(gemb, k) # Ideally, this should be different than input param embedding, but it's okay!
             emb_guidance.append(gemb)
         
         # concat all the embeddings
         if self.use_cross_attention:
             xx = torch.cat((emb_x), dim=1)
         else:
+            # List addition is concatenation
             xx = torch.cat((emb_x + emb_timesteps + emb_guidance + emb_gen + emb_obj), dim=1) # Shape- (B, 6+1+6+1, 152)
 
         # add positional encoding to the input (not learnable / sinoid)

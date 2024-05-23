@@ -14,6 +14,8 @@ class Behave:
     vitpose_folder: str = 'keypoints/vitpose'
     vitposeplus_folder: str = 'keypoints/vitposeplus'
     pseudogt_folder: str = 'gt'
+    pose_folder: str = 'pose_pred'
+    resnet_folder ='resnet_feat'
     image_format: str = 'jpg'
     overfit: bool = False
     overfit_num_samples: int = 12    

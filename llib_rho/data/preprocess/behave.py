@@ -16,6 +16,7 @@ from llib_rho.cameras.perspective import PerspectiveCamera
 from llib_rho.bodymodels.utils import smpl_to_openpose
 from loguru import logger as guru
 from llib_rho.data.preprocess.utils.shape_converter import ShapeConverter
+from pytorch3d.transforms import matrix_to_axis_angle
 
 KEYPOINT_COST_TRHESHOLD = 0.008
 
@@ -37,16 +38,21 @@ class Behave():
         vitpose_folder='vitpose',
         vitposeplus_folder='vitposeplus',
         pseudogt_folder='gt',
+        pose_folder='pose_pred',
+        resnet_folder='resnet_feat',
+        get_mesh=False,
         **kwargs,
     ):  
 
         self.data_folder = data_folder
         self.split = split
+        self.get_mesh = get_mesh
         # self.imgnames = os.listdir(os.path.join(data_folder, split, image_folder))
         self.imgnames = []
         for img in os.listdir(os.path.join(data_folder, split, pseudogt_folder)):
             img = img[:-4]
             self.imgnames.append(img + ".jpg")
+        # self.imgnames = random.choices(self.imgnames, k=100)
 
         assert body_model_type in ['smpl', 'smplh', 'smplx'], "Can only handle smpl, smplh and smplx body model."
         self.body_model_type = body_model_type
@@ -56,6 +62,8 @@ class Behave():
         self.openpose_folder = osp.join(self.data_folder, self.split, openpose_folder)
         self.bev_folder = osp.join(self.data_folder, self.split, bev_folder)
         self.vitpose_folder = osp.join(self.data_folder, self.split, vitpose_folder)
+        self.pose_folder = osp.join(self.data_folder, self.split, pose_folder)
+        self.resnet_folder = osp.join(self.data_folder, self.split, resnet_folder)
         self.pseudogt_folder = osp.join(self.data_folder, self.split, pseudogt_folder)
         self.has_pseudogt = False if pseudogt_folder == '' else True
 
@@ -70,9 +78,9 @@ class Behave():
             self.female_body_model = smplx.create(model_path=model_folder, model_type='smplh', gender='female')
 
         # Initialize pretrained resnet 18
-        self.resnet18 = models.resnet18(pretrained=True)
-        self.resnet18 = nn.Sequential(*list(self.resnet18.children())[:-1])
-        self.resnet18.train() # freeze the model
+        # self.resnet18 = models.resnet18(pretrained=True)
+        # self.resnet18 = nn.Sequential(*list(self.resnet18.children())[:-1])
+        # self.resnet18.train() # freeze the model
 
         meta_data_path = os.path.join(data_folder, split, 'metadata.pkl')
         self.meta_data = pickle.load(open(meta_data_path, 'rb'))
@@ -82,14 +90,12 @@ class Behave():
         for key in obj_embeddings.item().keys():
             self.obj_embeddings[key] = np.expand_dims(obj_embeddings.item()[key], axis=0).astype(np.float32)
 
-        if split == 'train':
+        if self.get_mesh:
             self.mesh_vertices = {}
             self.mesh_faces = {}
             with open(os.path.join(data_folder, "ref_hoi.pkl"), "rb") as f:
                 x = pickle.load(f)
                 for obj_name in x['templates'].keys():
-                    if 'obj' in obj_name[:4]:
-                        continue
                     data = x['templates'][obj_name]
                     verts = data['verts']
                     faces = data['faces']
@@ -234,39 +240,55 @@ class Behave():
     def load_single_image(self, imgname):
         imgID = os.path.basename(imgname)
         img_path = osp.join(self.image_folder, f'{imgname}')
-        img_cropped_path = osp.join(self.cropped_image_folder, f'{imgname}')
+        # img_cropped_path = osp.join(self.cropped_image_folder, f'{imgname}')
 
         bev_path = osp.join(self.bev_folder, f'{imgname[:-4]}.npz')
-        # vitpose_path = osp.join(self.vitpose_folder, f'{imgname[:-4]}_keypoints.json')
-        # openpose_path = osp.join(self.openpose_folder, f'{imgname[:-4]}.json')
+        vitpose_path = osp.join(self.vitpose_folder, f'{imgname[:-4]}_keypoints.json')
+        openpose_path = osp.join(self.openpose_folder, f'{imgname[:-4]}.json')
+        resnet_path = osp.join(self.resnet_folder, f'{imgname[:-4]}.pkl')
 
-        img = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
-        img_cropped = cv2.cvtColor(cv2.imread(img_cropped_path), cv2.COLOR_BGR2RGB)
+        # img = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
+        # img_cropped = cv2.cvtColor(cv2.imread(img_cropped_path), cv2.COLOR_BGR2RGB)
 
         # preprocess image for resnet
-        input_resnet = self.preprocess_image(img_cropped) # 224, 224, 3 tensor
-        resnet_feat = self.resnet18(input_resnet.unsqueeze(0))
-        assert resnet_feat.shape == (1, 512), f"Resnet feature shape is {resnet_feat.shape}"
+        # input_resnet = self.preprocess_image(img_cropped) # 224, 224, 3 tensor
+        # resnet_feat = self.resnet18(input_resnet.unsqueeze(0))
+        # assert resnet_feat.shape == (1, 512), f"Resnet feature shape is {resnet_feat.shape}"
 
-        # bev_data = np.load(bev_path, allow_pickle=True)['results'][()]
-        # img = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
+        # sanity check bev path
+        if not os.path.exists(bev_path):
+            return None
+        
         bev_data = np.load(bev_path, allow_pickle=True)['results'][()]
 
         if len(bev_data.keys()) == 0:
             return None
+        
+        pose_path = osp.join(self.pose_folder, f'{imgname[:-4]}.json')
+        pose_data = json.load(open(pose_path, 'r'))
+
+        # load resnet data
+        resnet_feat = pickle.load(open(resnet_path, 'rb'))
+        assert resnet_feat.shape == (512,), f"Resnet feature shape is {resnet_feat.shape}"
 
         bev_data['bev_betas'] = np.expand_dims(bev_data['bev_betas'], axis=0).astype(np.float32)
-        bev_data['bev_orient_obj'] = np.array([[0.0, 0.0, 0.0]]).astype(np.float32)
-        bev_data['bev_transl_obj'] = bev_data['bev_transl']
-
+        obj_rot = torch.from_numpy(np.expand_dims(pose_data['R_pred'], axis=0))
+        bev_data['bev_orient_obj'] = matrix_to_axis_angle(obj_rot).numpy().astype(np.float32)
+        bev_data['bev_transl_obj'] = np.array(pose_data['t_pred']).reshape(1, 3).astype(np.float32) + bev_data['bev_transl']
+        # bev_data['bev_orient_obj'] = np.array([[0.0, 0.0, 0.0]]).astype(np.float32)
+        # bev_data['bev_transl_obj'] = bev_data['bev_transl']
+        
         # vitpose_data = json.load(open(vitpose_path, 'r'))['people']
         # if not os.path.exists(openpose_path):
         #     guru.warning(f'Openpose file does not exist; using ViTPose keypoints only.')
         #     op_data = vitpose_data
         # else:
         #     op_data = json.load(open(openpose_path, 'r'))['people']
+        vitpose_data = np.zeros((1, 135, 3))
+        vitpose_data[:, :, -1] = 1
+        op_data = vitpose_data
 
-        height, width = [1536, 2048] #img.shape[:2]
+        height, width = [1536, 2048] # img.shape[:2]
         # camera translation was already applied to mesh, so we can set it to zero.
         cam_transl = [0., 0., 0.] 
         # camera rotation needs 180 degree rotation around z axis, because bev and
@@ -279,7 +301,7 @@ class Behave():
             'imgname': imgname,
             'imgpath': img_path,
             # 'image': img,
-            'resnet_feat': resnet_feat, # 1, 512
+            'resnet_feat': resnet_feat.reshape(1, 512),
             'img_height': height,
             'img_width': width,
             'cam_transl': cam_transl,
@@ -316,6 +338,7 @@ class Behave():
         #     dtype=np.float32).reshape([-1, 3])[:17, :]
         # # final openpose
         # op_kpts = np.expand_dims(np.concatenate([body, face, contour], axis=0), axis=0)  # 1, 135, 3
+        op_kpts = op_data
 
         # # process Vitpose keypoints
         # kpts = vitpose_data[human_idx]
@@ -330,9 +353,10 @@ class Behave():
         #     dtype=np.float32).reshape([-1, 3])[:17, :]
         # # final openpose
         # vitpose_kpts = np.expand_dims(np.concatenate([body, face, contour], axis=0), axis=0)  # 1, 135, 3
+        vitpose_kpts = vitpose_data
 
-        # human_data['vitpose'] = vitpose_kpts
-        # human_data['openpose'] = op_kpts
+        human_data['vitpose'] = vitpose_kpts
+        human_data['openpose'] = op_kpts
         # for k, v in human_data.items():
 
         #     # if k in [
@@ -359,6 +383,8 @@ class Behave():
                 'pgt_transl_obj': np.expand_dims(gt_fits['obj_trans'], axis=0).astype(np.float32),   # 1, 3
             }
             image_data_template.update(pgt_data)
+            # obj_transl = bev_data['bev_transl_obj'] - pgt_data['pgt_transl'] + bev_data['bev_transl']
+            # image_data_template['bev_transl_obj'] = obj_transl
 
         return image_data_template
 
@@ -368,7 +394,7 @@ class Behave():
             img_data = self.load_single_image(imgname)
             if img_data is not None:
                 data.append(img_data)
-        if self.split == 'train':
+        if self.get_mesh:
             return data, self.mesh_vertices, self.mesh_faces
         else:
             return data

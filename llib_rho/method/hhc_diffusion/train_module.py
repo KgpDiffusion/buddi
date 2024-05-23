@@ -65,6 +65,7 @@ class TrainModule(nn.Module):
         self.male_body_model = body_model[0]
         self.female_body_model = body_model[1]
         self.body_model_type = type(self.male_body_model).__name__.lower().split('_')[0]
+        #TODO:@shubhikg- Why np.int32?
         face_tensor = torch.from_numpy(self.male_body_model.faces.astype(np.int32))
         self.register_buffer("faces_tensor", face_tensor)
 
@@ -312,9 +313,15 @@ class TrainModule(nn.Module):
             "transl_obj": batch[f"{prefix}_transl_obj"],
         }
 
+        if 'resnet_feat' in batch.keys() and prefix!= 'pgt':
+            out['resnet_feat'] = batch['resnet_feat']
+
         # clone parameters if clone is true 
         if clone:
-            for pp in ['orient', 'pose', 'shape', 'transl', 'orient_obj', 'transl_obj']:
+            USEFUL_KEYS = ['orient', 'pose', 'shape', 'transl', 'orient_obj', 'transl_obj']
+            if 'resnet_feat' in out.keys() and prefix !='pgt':
+                USEFUL_KEYS.append('resnet_feat')
+            for pp in USEFUL_KEYS:
                 out[pp] = out[pp].clone()
 
         return out
@@ -587,7 +594,7 @@ class TrainModule(nn.Module):
             out.update({pp: value})
         return out
 
-    def sampling_loop(self, x, y, ts, obj, obj_vertices, gender, inpaint=None, log_steps=1, return_latent_vec=False, eta=1.0):
+    def sampling_loop(self, x, y, ts, obj, obj_vertices, gender, inpaint=None, log_steps=1, return_latent_vec=False, eta=1.0, store_obj_trans=False):
         """Sample from diffusion model."""
 
         sbs = x['orient_h0'].shape[0]
@@ -658,19 +665,28 @@ class TrainModule(nn.Module):
                 # diffused object vertices
                 obj_ts[ii] = []
                 obj_starts[ii] = []
-                rot = rotation_6d_to_matrix(diffusion_output['diffused_params']['orient_obj'])
-                trans = diffusion_output['diffused_params']['transl_obj']
+                if not store_obj_trans:
+                    rot = rotation_6d_to_matrix(diffusion_output['diffused_params']['orient_obj'])
+                    trans = diffusion_output['diffused_params']['transl_obj']
 
-                rot_denoise = rotation_6d_to_matrix(diffusion_output['denoised_params']['orient_obj'])
-                trans_denoise = diffusion_output['denoised_params']['transl_obj']
-                for obj_idx, vertices in enumerate(obj_vertices):
-                    # diffused object vertices
-                    new_postion = vertices @ rot[obj_idx].transpose(0, 1) + trans[obj_idx]
-                    obj_ts[ii].append(new_postion)
+                    rot_denoise = rotation_6d_to_matrix(diffusion_output['denoised_params']['orient_obj'])
+                    trans_denoise = diffusion_output['denoised_params']['transl_obj']
+                    for obj_idx, vertices in enumerate(obj_vertices):
+                        # diffused object vertices
+                        new_postion = vertices @ rot[obj_idx].transpose(0, 1) + trans[obj_idx]
+                        obj_ts[ii].append(new_postion)
 
-                    # denoised object vertices
-                    denoise_position = vertices @ rot_denoise[obj_idx].transpose(0, 1) + trans_denoise[obj_idx]
-                    obj_starts[ii].append(denoise_position)
+                        # denoised object vertices
+                        denoise_position = vertices @ rot_denoise[obj_idx].transpose(0, 1) + trans_denoise[obj_idx]
+                        obj_starts[ii].append(denoise_position)
+                else:
+                    rot = rotation6d_to_axis_angle(diffusion_output['diffused_params']['orient_obj'])
+                    trans = diffusion_output['denoised_params']['transl_obj']
+                    obj_ts[ii] = [rot, trans]
+                    rot_denoise = rotation6d_to_axis_angle(diffusion_output['denoised_params']['orient_obj']) # B, 3, 3
+                    trans_denoise = diffusion_output['denoised_params']['transl_obj'] # B, 3
+                    obj_starts[ii] = [rot_denoise, trans_denoise]
+
 
                 if return_latent_vec:
                     x_latent[ii] = diffusion_output["model_latent_vec"]
@@ -681,19 +697,27 @@ class TrainModule(nn.Module):
 
                 obj_ts["final"] = []
                 obj_starts["final"] = []
-                rot = rotation_6d_to_matrix(diffusion_output['diffused_params']['orient_obj'])
-                trans = diffusion_output['diffused_params']['transl_obj']
+                if not store_obj_trans:
+                    rot = rotation_6d_to_matrix(diffusion_output['diffused_params']['orient_obj'])
+                    trans = diffusion_output['diffused_params']['transl_obj']
 
-                rot_denoise = rotation_6d_to_matrix(diffusion_output['denoised_params']['orient_obj'])
-                trans_denoise = diffusion_output['denoised_params']['transl_obj']
-                for obj_idx, vertices in enumerate(obj_vertices):
-                    # diffused object vertices
-                    new_postion = vertices @ rot[obj_idx].transpose(0, 1) + trans[obj_idx]
-                    obj_ts["final"].append(new_postion)
+                    rot_denoise = rotation_6d_to_matrix(diffusion_output['denoised_params']['orient_obj'])
+                    trans_denoise = diffusion_output['denoised_params']['transl_obj']
+                    for obj_idx, vertices in enumerate(obj_vertices):
+                        # diffused object vertices
+                        new_postion = vertices @ rot[obj_idx].transpose(0, 1) + trans[obj_idx]
+                        obj_ts["final"].append(new_postion)
 
-                    # denoised object vertices
-                    denoise_position = vertices @ rot_denoise[obj_idx].transpose(0, 1) + trans_denoise[obj_idx]
-                    obj_starts["final"].append(denoise_position)
+                        # denoised object vertices
+                        denoise_position = vertices @ rot_denoise[obj_idx].transpose(0, 1) + trans_denoise[obj_idx]
+                        obj_starts["final"].append(denoise_position)
+                else:
+                    rot = rotation6d_to_axis_angle(diffusion_output['diffused_params']['orient_obj'])
+                    trans = diffusion_output['denoised_params']['transl_obj']
+                    obj_ts["final"] = [rot, trans]
+                    rot_denoise = rotation6d_to_axis_angle(diffusion_output['denoised_params']['orient_obj']) # B, 3, 3
+                    trans_denoise = diffusion_output['denoised_params']['transl_obj'] # B, 3
+                    obj_starts["final"] = [rot_denoise, trans_denoise]
 
         if return_latent_vec:
             return x_ts, x_starts, obj_ts, obj_starts, x_latent
@@ -1056,11 +1080,13 @@ class TrainModule(nn.Module):
         # Get gender of the human
         gender = batch['gender'][:, 0]  # B, 2
 
-        # overwrite batch with corret input
+        # overwrite batch with corret input. cast smpl basically preps trans and rot if there is a relative rotation/trans.
         batch = self.cast_smpl(self.preprocess_batch(batch), gender)
 
         # target / gt params
         # target_params = self.get_gt_params(batch)
+        #TODO:shubhikg- Why are we only using male spml
+        # returns SMPL vertices and other relavent params after smpl forward.
         target_smpls = self.get_smpl(batch, gender)
 
         # sample t
@@ -1146,7 +1172,7 @@ class TrainModule(nn.Module):
         return total_loss, loss_dict, output_dict
 
     def sample_from_model(self, timesteps, log_freq, guidance_params={}, gender=None, curr_obj_embeddings= None,
-                          obj_vertices=None, batch_size=None):
+                          obj_vertices=None, batch_size=None, store_obj_trans=False):
 
         """Sample from the diffusion model without conditioning starting from noise"""
 
@@ -1171,7 +1197,7 @@ class TrainModule(nn.Module):
         # run diffusion sampling loop
         x_ts, x_starts, obj_ts, obj_starts = self.sampling_loop(
             x=noise_params, y=guidance_params, ts=timesteps, obj=curr_obj_embeddings, gender=gender,
-            obj_vertices=obj_vertices, log_steps=log_freq, return_latent_vec=False
+            obj_vertices=obj_vertices, log_steps=log_freq, return_latent_vec=False, store_obj_trans=store_obj_trans
         )
 
         return x_ts, x_starts, obj_ts, obj_starts
