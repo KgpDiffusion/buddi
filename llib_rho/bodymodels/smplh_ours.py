@@ -21,9 +21,15 @@ class SMPLH_Ours(SMPLH):
             Same as SMPL-X   
         """
         super(SMPLH_Ours, self).__init__(**kwargs)
+        self.kwargs = kwargs
 
     def name(self) -> str:
         return 'SMPL-H'
+    
+    def clone(self):
+        # Create a new instance and clone necessary attributes
+        new_instance = SMPLH_Ours(**self.kwargs)
+        return new_instance
 
     def forward(
         self,

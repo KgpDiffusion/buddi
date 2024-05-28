@@ -403,6 +403,7 @@ class TrainModule(nn.Module):
 
         if relative_transl:
             transl = params["transl"]
+            obj_transl = params['transl_obj']
             if cam_rotation is not None:
                 root_transl = transl[:, [0], :]
                 xx = target_transl + pelvis
@@ -416,10 +417,11 @@ class TrainModule(nn.Module):
                     - pelvis
                 )
             else:
-                transl[:, 1, :] -= transl[:, 0, :]
-                transl[:, 0, :] = 0.0
+                obj_transl -= transl
+                transl = torch.zeros_like(transl)
 
             params["transl"] = transl
+            params['transl_obj'] = obj_transl
 
         return params
 

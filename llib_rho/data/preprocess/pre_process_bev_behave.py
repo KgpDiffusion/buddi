@@ -62,11 +62,13 @@ def process_bev(bev_human_idx, bev_data, image_size, gender, body_model_type, sh
     )
 
     bev_vertices = data['bev_smpl_vertices']
+    #TODO: Ask shubhikg about this! Why 45,46?? and 0 below
     bev_root_trans = data['bev_smpl_joints'][[45,46],:].mean(0)
     bev_vertices_root_trans = bev_vertices - bev_root_trans[np.newaxis,:] \
         + bev_cam_trans.numpy()[np.newaxis,:]
     data['bev_smpl_vertices_root_trans'] = bev_vertices_root_trans
     
+    ## TODO:shubhikg - Shouldn't this be SMPL-H only? Basically smpl-h and smpl are same lol!
     smplx_update = {
         'bev_global_orient': [],  # 1, 3
         'bev_body_pose': [],  # 1, 63
@@ -99,7 +101,8 @@ def process_bev(bev_human_idx, bev_data, image_size, gender, body_model_type, sh
         betas=h_betas,
     )
 
-    root_trans = body.joints.detach()[:,0,:]
+    #TODO: Ask shubhikg about this! Is root=0 in smpl-h
+    root_trans = body.joints.detach()[:,0,:] 
     transl = -root_trans.to('cpu') + bev_cam_trans.to('cpu')
     smplx_update['bev_transl'].append(transl)
 

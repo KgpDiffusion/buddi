@@ -244,7 +244,7 @@ class Behave():
 
         bev_path = osp.join(self.bev_folder, f'{imgname[:-4]}.npz')
         vitpose_path = osp.join(self.vitpose_folder, f'{imgname[:-4]}_keypoints.json')
-        openpose_path = osp.join(self.openpose_folder, f'{imgname[:-4]}.json')
+        openpose_path = osp.join(self.openpose_folder, f'{imgname[:-4]}_keypoints.json')
         resnet_path = osp.join(self.resnet_folder, f'{imgname[:-4]}.pkl')
 
         # img = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
@@ -278,17 +278,14 @@ class Behave():
         # bev_data['bev_orient_obj'] = np.array([[0.0, 0.0, 0.0]]).astype(np.float32)
         # bev_data['bev_transl_obj'] = bev_data['bev_transl']
         
-        # vitpose_data = json.load(open(vitpose_path, 'r'))['people']
-        # if not os.path.exists(openpose_path):
-        #     guru.warning(f'Openpose file does not exist; using ViTPose keypoints only.')
-        #     op_data = vitpose_data
-        # else:
-        #     op_data = json.load(open(openpose_path, 'r'))['people']
-        vitpose_data = np.zeros((1, 135, 3))
-        vitpose_data[:, :, -1] = 1
-        op_data = vitpose_data
+        vitpose_data = json.load(open(vitpose_path, 'r'))['people']
+        if not os.path.exists(openpose_path):
+            guru.warning(f'Openpose file does not exist; using ViTPose keypoints only.')
+            op_data = vitpose_data
+        else:
+            op_data = json.load(open(openpose_path, 'r'))['people']
 
-        height, width = [1536, 2048] # img.shape[:2]
+        height, width = [1080, 1920] #[1536, 2048] # img.shape[:2]
         # camera translation was already applied to mesh, so we can set it to zero.
         cam_transl = [0., 0., 0.] 
         # camera rotation needs 180 degree rotation around z axis, because bev and
@@ -325,35 +322,33 @@ class Behave():
         image_data_template['obj_name'] = obj_name
         image_data_template['obj_embeddings'] = obj_embeddings  # 1, 256
 
-        # # process OpenPose keypoints
-        # kpts = op_data[human_idx]
-        # # body + hands
-        # body = np.array(kpts['pose_keypoints_2d'] + \
-        #     kpts['hand_left_keypoints_2d'] + kpts['hand_right_keypoints_2d']
-        # ).reshape(-1,3)
-        # # face 
-        # face = np.array(kpts['face_keypoints_2d'],
-        #     dtype=np.float32).reshape([-1, 3])[17: 17 + 51, :]
-        # contour = np.array(kpts['face_keypoints_2d'],
-        #     dtype=np.float32).reshape([-1, 3])[:17, :]
-        # # final openpose
-        # op_kpts = np.expand_dims(np.concatenate([body, face, contour], axis=0), axis=0)  # 1, 135, 3
-        op_kpts = op_data
+        # process OpenPose keypoints
+        kpts = op_data[human_idx]
+        # body + hands
+        body = np.array(kpts['pose_keypoints_2d'] + \
+            kpts['hand_left_keypoints_2d'] + kpts['hand_right_keypoints_2d']
+        ).reshape(-1,3)
+        # face 
+        face = np.array(kpts['face_keypoints_2d'],
+            dtype=np.float32).reshape([-1, 3])[17: 17 + 51, :]
+        contour = np.array(kpts['face_keypoints_2d'],
+            dtype=np.float32).reshape([-1, 3])[:17, :]
+        # final openpose
+        op_kpts = np.expand_dims(np.concatenate([body, face, contour], axis=0), axis=0)  # 1, 135, 3
 
-        # # process Vitpose keypoints
-        # kpts = vitpose_data[human_idx]
-        # # body + hands
-        # body = np.array(kpts['pose_keypoints_2d'] + \
-        #     kpts['hand_left_keypoints_2d'] + kpts['hand_right_keypoints_2d']
-        # ).reshape(-1,3)
-        # # face 
-        # face = np.array(kpts['face_keypoints_2d'],
-        #     dtype=np.float32).reshape([-1, 3])[17: 17 + 51, :]
-        # contour = np.array(kpts['face_keypoints_2d'],
-        #     dtype=np.float32).reshape([-1, 3])[:17, :]
-        # # final openpose
-        # vitpose_kpts = np.expand_dims(np.concatenate([body, face, contour], axis=0), axis=0)  # 1, 135, 3
-        vitpose_kpts = vitpose_data
+        # process Vitpose keypoints
+        kpts = vitpose_data[human_idx]
+        # body + hands
+        body = np.array(kpts['pose_keypoints_2d'] + \
+            kpts['hand_left_keypoints_2d'] + kpts['hand_right_keypoints_2d']
+        ).reshape(-1,3)
+        # face 
+        face = np.array(kpts['face_keypoints_2d'],
+            dtype=np.float32).reshape([-1, 3])[17: 17 + 51, :]
+        contour = np.array(kpts['face_keypoints_2d'],
+            dtype=np.float32).reshape([-1, 3])[:17, :]
+        # final openpose
+        vitpose_kpts = np.expand_dims(np.concatenate([body, face, contour], axis=0), axis=0)  # 1, 135, 3
 
         human_data['vitpose'] = vitpose_kpts
         human_data['openpose'] = op_kpts
@@ -383,8 +378,6 @@ class Behave():
                 'pgt_transl_obj': np.expand_dims(gt_fits['obj_trans'], axis=0).astype(np.float32),   # 1, 3
             }
             image_data_template.update(pgt_data)
-            # obj_transl = bev_data['bev_transl_obj'] - pgt_data['pgt_transl'] + bev_data['bev_transl']
-            # image_data_template['bev_transl_obj'] = obj_transl
 
         return image_data_template
 

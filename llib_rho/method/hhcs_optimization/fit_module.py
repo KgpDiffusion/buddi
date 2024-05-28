@@ -71,14 +71,15 @@ class HHCSOpti(nn.Module):
         self.num_iters = opti_cfg.hhcs.max_iters
 
         # parameters to be optimized
+        # only optimize betas in first stage
         self.optimizables = {
             0: [
                 'body_model.transl',
                 'body_model.betas',
                 'body_model.body_pose',
                 # 'body_model.global_orient',
-                'obj.orient_obj',
-                'obj.transl_obj',
+                # 'obj.orient_obj',
+                # 'obj.transl_obj',
             ],    
             1: [
                 'body_model.transl',
@@ -88,6 +89,8 @@ class HHCSOpti(nn.Module):
             ],
         }       
 
+        # TODO: ag6, shubhikg - In our case we have bev guidance so might as well uncomment it.
+        # Can see visually the outputs of BEV rotation or measure quantitatively how far is BEV prediction from gt in global orient!
         # if bev guidance also optimize the body global orientation 
         # if len(self.diffusion_module.exp_cfg.guidance_params) > 0:
             # self.optimizables[0].extend([
@@ -132,15 +135,17 @@ class HHCSOpti(nn.Module):
         device = self.male_body_model.betas.device
         gender_male_mask = init_human['gender'][0, 0] == 1
         if gender_male_mask:
-            self.body_model = self.male_body_model
+            self.body_model = self.male_body_model.clone().to(device)
         else:
-            self.body_model = self.female_body_model
+            self.body_model = self.female_body_model.clone().to(device)
         
         for param_name, param in self.body_model.named_parameters():
+            # FOR SMPL-H they include all SMPL (global trans,orient,shape,pose) + (left_hand_pose+right_hand_pose)
             if param_name in init_human.keys():
                 init_value = init_human[param_name][[0]].clone().detach().to(device).requires_grad_(True)
                 param[:] = init_value
 
+        # Maybe they'll not optimize it later on. Verify!
         for param_name, param in self.camera.named_parameters():
             if param_name in init_cam.keys():
                 init_value = init_cam[param_name].clone().detach().unsqueeze(0).to(device).requires_grad_(True)
@@ -152,12 +157,12 @@ class HHCSOpti(nn.Module):
         self.obj = ObjectBehave(init_obj['orient_obj'], init_obj['transl_obj'])        
 
 
-    def setup_optimizer(self, init_human, init_cam, stage):
+    def setup_optimizer(self, init_human, init_cam,init_obj, stage):
         """Setup the optimizer for the current stage / reset in stages > 0."""
 
         # in the first stage, set the SMPL-X parameters to the initial values        
         if stage == 0:
-            self.fill_params(init_human, init_cam)
+            self.fill_params(init_human, init_cam, init_obj)
 
         # pick the parameters to be optimized
         self.setup_optimiables(stage)
@@ -184,9 +189,8 @@ class HHCSOpti(nn.Module):
     def render_current_estimate(self, stage="", iter="", color=['light_blue3', 'light_blue5']):
         """Render the current estimates"""
 
-        v1 = self.body_model_h1().vertices.detach()
-        v2 = self.body_model_h2().vertices.detach()
-        verts = torch.cat([v1,v2], dim=0)
+        v1 = self.body_model.vertices.detach()
+        verts = torch.cat([v1], dim=0)
 
         bm = 'smpl' if verts.shape[1] == 6890 else 'smplx'
         self.renderer.update_camera_pose(
@@ -198,15 +202,17 @@ class HHCSOpti(nn.Module):
         self.renderings.append(color_image)
 
 
-    def optimize_humans(
+    def optimize_params(
         self,
         #init_h1, 
         #init_h2, 
         init_human,
         init_camera,
-        contact_map,
+        init_obj,
         stage,
-        guidance_params={},
+        guidance_params,
+        gender, 
+        obj_embeddings
     ):  
         """Optimize the human parameters for the given stage."""
 
@@ -215,12 +221,12 @@ class HHCSOpti(nn.Module):
 
         for i in range(self.num_iters[stage]):
             
+            # render iters is false by default
             if self.render_iters:
                 colors = {0: ['paper_blue', 'paper_red'], 1: ['paper_blue', 'paper_red']}
                 self.render_current_estimate(stage, i, colors[stage])
-
-            smpl_output_h1 = self.body_model_h1()
-            smpl_output_h2 = self.body_model_h2()
+            smpl_output = self.body_model()
+            obj_output= self.obj
             camera = self.camera
 
             # we tried different approaches / noies levels when using the SDS loss
@@ -243,14 +249,16 @@ class HHCSOpti(nn.Module):
 
             # compute all loss
             loss, loss_dict = self.criterion(
-                smpl_output_h1, 
-                smpl_output_h2, 
+                smpl_output, 
+                obj_output, 
                 camera,
                 #init_h1, 
                 #init_h2,
                 init_human,
                 init_camera,
-                contact_map,
+                init_obj,
+                gender, 
+                obj_embeddings,
                 use_diffusion_prior=self.opti_cfg.use_diffusion,
                 diffusion_module=self.diffusion_module,
                 t=t_i,
@@ -282,6 +290,7 @@ class HHCSOpti(nn.Module):
         # if they're not visible in the image
         with torch.no_grad():
             self.fill_params(init_human, init_camera, init_obj)
+            # project current bev points to camera!
             init_human['init_keypoints'] = torch.cat([
                 self.camera.project(self.body_model().joints)], axis=0)
 
@@ -313,6 +322,14 @@ class HHCSOpti(nn.Module):
 
 
         def undo_orient_and_transl(diffusion_module, x_start_smpls, x_start_obj, target_rotation, target_transl):
+            """ 
+                ARGS:
+                    diffusion_module- Used for inferencing on diffusion model
+                    x_start_smpls - denoised SMPLs after DDIM inferencing
+                    X_start_obj - denoised object rot and trans after ddim inferencing
+                    target_rotation - bev estimate of rotation
+                    target_transl- bev estimate of transl            
+            """
             
             #orient, cam_rotation
             global_orient_h0 = x_start_smpls.global_orient.unsqueeze(1) # 1, 1, 3
@@ -349,6 +366,8 @@ class HHCSOpti(nn.Module):
             cond_ts = np.arange(1, self.diffusion_module.diffusion.num_timesteps, 100)[::-1]
             log_freq = cond_ts.shape[0] # no logging
 
+            # x starts is basically final inferenced output from ddim!
+            # obj_starts is basically denoised object vertices
             x_ts, x_starts, obj_ts, obj_starts = self.diffusion_module.sample_from_model(
                 cond_ts, log_freq, guidance_params, gender, obj_embeddings, obj_vertices,
                 store_obj_trans=True
@@ -378,6 +397,26 @@ class HHCSOpti(nn.Module):
                 self.fill_params(init_human, init_camera, init_obj)
                 init_human['init_keypoints'] = torch.cat([
                     self.camera.project(self.body_model().joints)], axis=0) 
+
+
+        # Optimization routine in multiple stages! 2 stages by default!
+        for stage, _ in enumerate(range(len(self.num_iters))):
+            if stage > 0:
+                break
+            guru.info(f'Starting with stage: {stage} \n')
+
+            self.stopper.reset() # stopping criterion
+            self.setup_optimizer(init_human, init_camera,init_obj, stage) # setup optimizer
+
+            # clone the initial estimate and detach it from the graph since it'll be used
+            # as initialization and as prior the optimization
+            if stage > 0:
+                init_human['body_pose'] = self.body_model.body_pose.detach().clone(),
+                init_human['betas'] = self.body_model.betas.detach().clone(),
+             
+            # run optmization for one stage
+            self.optimize_params(init_human, init_camera, init_obj, stage, guidance_params, gender, obj_embeddings)
+
                 
         # Get final loss value and get full skinning
         with torch.no_grad():

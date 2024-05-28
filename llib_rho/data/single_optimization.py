@@ -162,7 +162,9 @@ class SingleOptiDataset(Dataset):
             final_keypoints[ram,22,:] = op_keypoints[ram,22,:]
             left_ankle_residual = np.sum((final_keypoints[:,14,:] - op_keypoints[:,14,:])**2, axis=1)
             lam = left_ankle_residual < ankle_thres
-            final_keypoints[lam,19,:] = op_keypoints[lam,19,:] 
+            final_keypoints[lam,19,:] = op_keypoints[lam,19,:]
+            final_keypoints[:, 1, :] = op_keypoints[:, 1, :]
+            final_keypoints[:, 8, :] = op_keypoints[:, 8, :]
         human_obj_target = { 
             'global_orient': item[f'{self.init_method}_global_orient'],
             'body_pose': item[f'{self.init_method}_body_pose'],

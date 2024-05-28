@@ -81,6 +81,7 @@ class Losses:
     cmap_binary_token: Loss = Loss(type="")
     diffusion_prior_orient: L2Loss = L2Loss(type="l2", squared=True)
     diffusion_prior_pose: L2Loss = L2Loss(type="l2", squared=True)
+    diffusion_prior_pose_obj: L2Loss = L2Loss(type="l2", squared=True)
     diffusion_prior_shape: L2Loss = L2Loss(type="l2", squared=True)
     diffusion_prior_scale: L2Loss = L2Loss(type="l2", squared=True)
     diffusion_prior_transl: L2Loss = L2Loss(type="l2", squared=True)

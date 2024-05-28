@@ -33,7 +33,7 @@ class JointMapper(nn.Module):
             return torch.index_select(joints, 1, self.joint_maps)
 
 
-def smpl_to_openpose(model_type='smplx', use_hands=True, use_face=True,
+def smpl_to_openpose(model_type='smplh', use_hands=True, use_face=True,
                      use_face_contour=False, openpose_format='coco25'):
     ''' Returns the indices of the permutation that maps OpenPose to SMPL
         Parameters

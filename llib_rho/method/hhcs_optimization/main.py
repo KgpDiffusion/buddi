@@ -29,7 +29,7 @@ from llib_rho.models.build import build_model
 from llib_rho.models.diffusion.build import build_diffusion
 from llib_rho.method.hhc_diffusion.train_module import TrainModule
 from llib_rho.method.hhc_diffusion.eval_module import EvalModule
-
+from .loss_module import HHCOptiLoss
 from .fit_module import HHCSOpti
 
 SEED = 42
@@ -195,12 +195,18 @@ def process_item(item_idx, cfg, item, logger, evaluator, diffusion_module, body_
     )
 
     opti_cfg = cfg.model.optimization
+    # create losses
+    criterion = HHCOptiLoss(
+        losses_cfgs = opti_cfg.losses,
+        body_model_type = cfg.body_model.type,
+    ).to(cfg.device)
+
     # create optimizer module
     optimization_module = HHCSOpti(
         opti_cfg=opti_cfg,
         camera=camera,
         body_model=body_model,
-        criterion=None,
+        criterion=criterion,
         batch_size=cfg.batch_size,
         device=cfg.device,
         diffusion_module=diffusion_module,
@@ -211,6 +217,7 @@ def process_item(item_idx, cfg, item, logger, evaluator, diffusion_module, body_
     # transform input item to human1, obj and camera dict
     human_data, cam_data, obj_data, gt_data = {}, {}, {}, {}
     for k, v in item.items():
+        #TODO:shubhikg- ['joints'] not present in dataloader!
         if k in ['global_orient', 'body_pose', 'betas', 'transl', 'keypoints', 'op_keypoints', 'joints', 'gender']:
             human_data[k] = v.to(cfg.device)
         elif k in ['pitch', 'yaw', 'roll', 'tx', 'ty', 'tz', 'fl', 'ih', 'iw']:
@@ -266,7 +273,7 @@ def process_item(item_idx, cfg, item, logger, evaluator, diffusion_module, body_
         t_type='final_cond'
     )
 
-    if item_idx % 25 == 0:
+    if item_idx % 25 == 0 and item_idx < 150:
         # visualize results
         renderer_newview = Pytorch3dRenderer(
             cameras = camera.cameras,
@@ -284,9 +291,13 @@ def process_item(item_idx, cfg, item, logger, evaluator, diffusion_module, body_
         # add keypoints to image
         IMGORIG = IMG.copy()
         h1pp = camera.project(smpl_output_h1.joints)
+        vitpose_kpts = item['keypoints'][0]
         
         for idx, joint in enumerate(h1pp[0]):
+            rand_col = np.random.randint(0, 256, 3)
+            rand_col = tuple ([int(x) for x in rand_col])
             IMGORIG = cv2.circle(IMGORIG, (int(joint[0]), int(joint[1])), 3, (255, 255, 0), 2)
+            IMGORIG = cv2.circle(IMGORIG, (int(vitpose_kpts[idx][0]), int(vitpose_kpts[idx][1])), 3, (255, 0, 0), 2)
 
         imgs_out = []
         for vidx, (verts, meshcol) in enumerate(zip(vertices_methods, colors)):
