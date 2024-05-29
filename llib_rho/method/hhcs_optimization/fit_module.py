@@ -22,6 +22,9 @@ from loguru import logger as guru
 from llib_rho.optimizer.build import build_optimizer
 from llib_rho.training.fitter import Stopper
 from pytorch3d.transforms import axis_angle_to_matrix, matrix_to_axis_angle
+from llib_rho.visualization.utils import *
+from llib_rho.visualization.renderer import Pytorch3dRenderer
+import cv2
 
 class ObjectBehave(nn.Module):
     def __init__(
@@ -78,8 +81,8 @@ class HHCSOpti(nn.Module):
                 'body_model.betas',
                 'body_model.body_pose',
                 # 'body_model.global_orient',
-                # 'obj.orient_obj',
-                # 'obj.transl_obj',
+                'obj.orient_obj',
+                'obj.transl_obj',
             ],    
             1: [
                 'body_model.transl',
@@ -108,7 +111,16 @@ class HHCSOpti(nn.Module):
         # rendered images per iter
         if self.render_iters:
             self.renderer = renderer
-            self.renderings = []
+            self.renderer_newview = Pytorch3dRenderer(
+            cameras = camera.cameras,
+            image_width=200,
+            image_height=300,
+            )
+            self.renderings = dict()
+
+        ## Output SMPL dictionary
+        self.total_steps_save=5
+        self.save_at_steps=None
 
     def setup_optimiables(self, stage):
         
@@ -185,22 +197,107 @@ class HHCSOpti(nn.Module):
                     v = v.item()
                     out += f'{kprint}: {v:.4f} | '
         print(out)
-    
-    def render_current_estimate(self, stage="", iter="", color=['light_blue3', 'light_blue5']):
+
+    def render_current_estimate(self, init_obj, vis_out, item, 
+                                stage="", iter=None, color=['light_blue3', 'light_blue5'],
+                                prefix = 'pred_opti'):
         """Render the current estimates"""
+        if iter in self.save_at_steps:
+            
+            with torch.no_grad():
+                if vis_out is not None:
+                    smpl_output = vis_out['one_step']['smpl_output']
+                    obj_output = vis_out['one_step']['obj_output']
+                    orient_obj = obj_output['orient_obj']
+                    transl_obj = obj_output['transl_obj']
+                    obj_vertices_posed = init_obj['obj_vertices'] @ axis_angle_to_matrix(orient_obj)[0].transpose(0, 1)  + transl_obj[0]
+                else:
+                    smpl_output = self.body_model()
+                    obj_output= self.obj
+                    obj_vertices_posed = init_obj['obj_vertices'] @ axis_angle_to_matrix(obj_output.orient_obj)[0].transpose(0, 1)  + obj_output.transl_obj[0]
 
-        v1 = self.body_model.vertices.detach()
-        verts = torch.cat([v1], dim=0)
+                device = smpl_output.vertices.device
+                verts_smpl = smpl_output.vertices
+                smplh_faces = torch.from_numpy(self.body_model.faces.astype(np.int32)).to(device)
+        
+            body_model_type = type(self.body_model).__name__.lower().split('_')[0]
+            obj_faces = init_obj['obj_faces']
 
-        bm = 'smpl' if verts.shape[1] == 6890 else 'smplx'
-        self.renderer.update_camera_pose(
-            self.camera.pitch.item(), self.camera.yaw.item(), self.camera.roll.item(), 
-            self.camera.tx.item(), self.camera.ty.item(), self.camera.tz.item()
-        )
-        rendered_img = self.renderer.render(verts, self.faces, colors = color, body_model=bm)
-        color_image = rendered_img[0].detach().cpu().numpy() * 255
-        self.renderings.append(color_image)
+            # create smpl model to get smpl faces
+            vertices_methods = [[verts_smpl, obj_vertices_posed.unsqueeze(0)]]
+            colors = [["light_blue1", "light_blue6"]]
+            orig_img = cv2.imread(item['imgpath'])[:,:,::-1].copy().astype(np.float32)
+            IMG = add_alpha_channel(orig_img)
+            
+            # add keypoints to image
+            IMGORIG = IMG.copy()
+            h1pp = self.camera.project(smpl_output.joints)
+            vitpose_kpts = item['keypoints'][0]
+            
+            for idx, joint in enumerate(h1pp[0]):
+                rand_col = np.random.randint(0, 256, 3)
+                rand_col = tuple ([int(x) for x in rand_col])
+                IMGORIG = cv2.circle(IMGORIG, (int(joint[0]), int(joint[1])), 3, (255, 255, 0), 2)
+                IMGORIG = cv2.circle(IMGORIG, (int(vitpose_kpts[idx][0]), int(vitpose_kpts[idx][1])), 3, (255, 0, 0), 2)
 
+            imgs_out = []
+            for vidx, (verts, meshcol) in enumerate(zip(vertices_methods, colors)):
+                IMG = IMGORIG.copy()
+                self.renderer.update_camera_pose(
+                    self.camera.pitch.item(), self.camera.yaw.item(), self.camera.roll.item(), 
+                    self.camera.tx.item(), self.camera.ty.item(), self.camera.tz.item()
+                )
+                verts_hum = verts[0]
+                verts_obj = verts[1]
+                rendered_img = self.renderer.render(verts_hum, smplh_faces, verts_obj, obj_faces, colors=meshcol, body_model=body_model_type)
+                color_image = rendered_img[0].detach().cpu().numpy() * 255
+                overlay_image = overlay_images(IMGORIG.copy(), color_image)
+                image_out = np.hstack((IMG, overlay_image))
+
+                # now with different views
+                vertex_transl_center = verts_hum.mean((0,1))
+
+                verts_centered = verts_hum - vertex_transl_center
+                verts_centered_obj = verts_obj - vertex_transl_center
+                
+                # y-axis rotation
+                for yy in [45.0, 90.0, 135.0]:
+                    self.renderer_newview.update_camera_pose(0.0, yy, 180.0, 0.0, 0.2, 2.0)
+                    rendered_img = self.renderer_newview.render(
+                        verts_centered,
+                        smplh_faces,
+                        verts_centered_obj,
+                        obj_faces,
+                        colors=meshcol,
+                        body_model=body_model_type)
+                    color_image = rendered_img[0].detach().cpu().numpy() * 255
+                    scale = image_out.shape[0] / color_image.shape[0]
+                    newsize = (int(scale * color_image.shape[1]), int(image_out.shape[0]))
+                    color_image = cv2.resize(color_image, dsize=newsize)
+                    image_out = np.hstack((image_out, color_image))
+                
+                # bird view
+                for pp in [270.0]:
+                    self.renderer_newview.update_camera_pose(pp, 0.0, 180.0, 0.0, 0.0, 2.0)
+                    rendered_img = self.renderer_newview.render(
+                        verts_centered,
+                        smplh_faces,
+                        verts_centered_obj,
+                        obj_faces,
+                        colors=meshcol,
+                        body_model=body_model_type)
+                    color_image = rendered_img[0].detach().cpu().numpy() * 255
+                    scale = image_out.shape[0] / color_image.shape[0]
+                    newsize = (int(scale * color_image.shape[1]), int(image_out.shape[0]))
+                    color_image = cv2.resize(color_image, dsize=newsize)
+                    image_out = np.hstack((image_out, color_image))
+                imgs_out.append(image_out)
+
+            # image_out = np.vstack((imgs_out[0], imgs_out[1]))
+            image_out = imgs_out[0]
+            joint_image = image_out[...,[2,1,0,3]][...,:3]
+            self.renderings[stage][iter][str(prefix)] = joint_image
+          
 
     def optimize_params(
         self,
@@ -209,6 +306,7 @@ class HHCSOpti(nn.Module):
         init_human,
         init_camera,
         init_obj,
+        item,
         stage,
         guidance_params,
         gender, 
@@ -219,12 +317,11 @@ class HHCSOpti(nn.Module):
         # set the loss weights for the current stage
         self.criterion.set_weights(stage)
 
+        num_iters = self.num_iters[stage]
+        self.save_at_steps = [int(x) for x in np.linspace(0, num_iters, self.total_steps_save)]
+
         for i in range(self.num_iters[stage]):
-            
-            # render iters is false by default
-            if self.render_iters:
-                colors = {0: ['paper_blue', 'paper_red'], 1: ['paper_blue', 'paper_red']}
-                self.render_current_estimate(stage, i, colors[stage])
+
             smpl_output = self.body_model()
             obj_output= self.obj
             camera = self.camera
@@ -248,7 +345,7 @@ class HHCSOpti(nn.Module):
                 t_i = None
 
             # compute all loss
-            loss, loss_dict = self.criterion(
+            loss, loss_dict, vis_out = self.criterion(
                 smpl_output, 
                 obj_output, 
                 camera,
@@ -268,6 +365,17 @@ class HHCSOpti(nn.Module):
             if self.print_loss:
                 self.print_losses(loss_dict, stage, i)
 
+            # render iters is false by default
+            if self.render_iters:
+                colors = {0: ['paper_blue', 'paper_red'], 1: ['paper_blue', 'paper_red']}
+                if i in self.save_at_steps:
+                    self.renderings[stage][i] = {}
+                
+                self.render_current_estimate(init_obj,None, item,stage, i, colors[stage])
+                # render one step predictions
+                self.render_current_estimate(init_obj,vis_out, item,stage, i, colors[stage], 
+                                             prefix='one_step_pred')
+
             # optimizer step
             self.optimizer.zero_grad()
             loss.backward()
@@ -283,6 +391,7 @@ class HHCSOpti(nn.Module):
         init_human,
         init_camera,
         init_obj,
+        item,
     ): 
         """Main fitting function running through all stages of optimization"""
 
@@ -405,6 +514,9 @@ class HHCSOpti(nn.Module):
                 break
             guru.info(f'Starting with stage: {stage} \n')
 
+            ## Initialize smpl outputs, obj_outputs
+            self.renderings[stage] = dict()
+
             self.stopper.reset() # stopping criterion
             self.setup_optimizer(init_human, init_camera,init_obj, stage) # setup optimizer
 
@@ -415,9 +527,8 @@ class HHCSOpti(nn.Module):
                 init_human['betas'] = self.body_model.betas.detach().clone(),
              
             # run optmization for one stage
-            self.optimize_params(init_human, init_camera, init_obj, stage, guidance_params, gender, obj_embeddings)
+            self.optimize_params(init_human, init_camera, init_obj,item, stage, guidance_params, gender, obj_embeddings)
 
-                
         # Get final loss value and get full skinning
         with torch.no_grad():
             smpl_output_h1 = self.body_model()

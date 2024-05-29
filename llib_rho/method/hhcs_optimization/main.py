@@ -181,11 +181,15 @@ def main(cfg, cmd_args):
 def process_item(item_idx, cfg, item, logger, evaluator, diffusion_module, body_model, camera):
 
     img_fn_out = item['imgname_fn_out']
+    img_fn = item['imgname_fn']
     out_fn_res = osp.join(logger.res_folder, f'{img_fn_out}.pkl')
     out_fn_img = osp.join(logger.img_folder, f'{img_fn_out}.png')
     out_fn_mp4 = osp.join(logger.sum_folder, f'{img_fn_out}.mp4')
     out_fn_gif = osp.join(logger.sum_folder, f'{img_fn_out}.gif')
 
+    # create vis directory for each filename
+    vis_dir = osp.join(logger.img_folder, img_fn[:-4])
+    os.makedirs(vis_dir, exist_ok=True)
     
     # create renderer (for overlay)
     renderer = Pytorch3dRenderer(
@@ -253,7 +257,8 @@ def process_item(item_idx, cfg, item, logger, evaluator, diffusion_module, body_
     smpl_output_h1, obj_output = optimization_module.fit(
         init_human=human_data,
         init_camera=cam_data,
-        init_obj=obj_data
+        init_obj=obj_data,
+        item=item,
     )
 
     # guru.info(f'Optimization finished for {img_fn_out}. Saving results.')
@@ -273,88 +278,114 @@ def process_item(item_idx, cfg, item, logger, evaluator, diffusion_module, body_
         t_type='final_cond'
     )
 
-    if item_idx % 25 == 0 and item_idx < 150:
-        # visualize results
-        renderer_newview = Pytorch3dRenderer(
-            cameras = camera.cameras,
-            image_width=200,
-            image_height=300,
-        )
-        # create smpl model to get smpl faces
-        
-        vertices_methods = [[verts_smpl, obj_vertices_posed.unsqueeze(0)]]
-        colors = [["light_blue1", "light_blue6"]]
-        imgpath = item['imgpath']
-        orig_img = cv2.imread(imgpath)[:,:,::-1].copy().astype(np.float32)
-        IMG = add_alpha_channel(orig_img)
-        
-        # add keypoints to image
-        IMGORIG = IMG.copy()
-        h1pp = camera.project(smpl_output_h1.joints)
-        vitpose_kpts = item['keypoints'][0]
-        
-        for idx, joint in enumerate(h1pp[0]):
-            rand_col = np.random.randint(0, 256, 3)
-            rand_col = tuple ([int(x) for x in rand_col])
-            IMGORIG = cv2.circle(IMGORIG, (int(joint[0]), int(joint[1])), 3, (255, 255, 0), 2)
-            IMGORIG = cv2.circle(IMGORIG, (int(vitpose_kpts[idx][0]), int(vitpose_kpts[idx][1])), 3, (255, 0, 0), 2)
+    ## Save all rendered images
+    renderings = optimization_module.renderings
+    modes= ['pred_opti','one_step_pred']
+    for mode in modes:
+        images = []
+        for stage in renderings.keys():
+            for step in renderings[stage].keys():
+                assert mode in renderings[stage][step].keys(), f"Mode {mode} not found in renderings keys {renderings[stage][step].keys()}"
+                image = renderings[stage][step][mode]
 
-        imgs_out = []
-        for vidx, (verts, meshcol) in enumerate(zip(vertices_methods, colors)):
-            IMG = IMGORIG.copy()
-            renderer.update_camera_pose(
-                camera.pitch.item(), camera.yaw.item(), camera.roll.item(), 
-                camera.tx.item(), camera.ty.item(), camera.tz.item()
-            )
-            verts_hum = verts[0]
-            verts_obj = verts[1]
-            rendered_img = renderer.render(verts_hum, smplh_faces, verts_obj, obj_faces, colors=meshcol, body_model=body_model_type)
-            color_image = rendered_img[0].detach().cpu().numpy() * 255
-            overlay_image = overlay_images(IMGORIG.copy(), color_image)
-            image_out = np.hstack((IMG, overlay_image))
+                # write stage and step on rightmost part of image
+                image = image.copy().astype(np.uint8)
+                cv2.putText(image, f'ST={stage}, i={step}', (image.shape[1] - 800, 200), cv2.FONT_HERSHEY_SIMPLEX, 4, (255, 0, 0), 3, cv2.LINE_AA)
+                images.append(image)
 
-            # now with different views
-            vertex_transl_center = verts_hum.mean((0,1))
+        if len(images):
+            # save
+            out = np.vstack(images)
+            out_fn_img = osp.join(vis_dir, f'{mode}.png')
+            cv2.imwrite(out_fn_img, out)
+    
+    # print optimized values
+    # print(f"Obj_output [Orient] for weight-> {opti_cfg.losses.diffusion_prior_rel_transl.weight}: ", obj_output.orient_obj)
+    # print(f"Obj_output [Transl] for weight-> {opti_cfg.losses.diffusion_prior_rel_transl.weight}: ", obj_output.transl_obj)
 
-            verts_centered = verts_hum - vertex_transl_center
-            verts_centered_obj = verts_obj - vertex_transl_center
+    # if item_idx % 1 == 0 and item_idx < 150:
+    #     print(f"Saving image ->{out_fn_img}")
+    #     # visualize results
+    #     renderer_newview = Pytorch3dRenderer(
+    #         cameras = camera.cameras,
+    #         image_width=200,
+    #         image_height=300,
+    #     )
+    #     # create smpl model to get smpl faces
+        
+    #     vertices_methods = [[verts_smpl, obj_vertices_posed.unsqueeze(0)]]
+    #     colors = [["light_blue1", "light_blue6"]]
+    #     imgpath = item['imgpath']
+    #     orig_img = cv2.imread(imgpath)[:,:,::-1].copy().astype(np.float32)
+    #     IMG = add_alpha_channel(orig_img)
+        
+    #     # add keypoints to image
+    #     IMGORIG = IMG.copy()
+    #     h1pp = camera.project(smpl_output_h1.joints)
+    #     vitpose_kpts = item['keypoints'][0]
+        
+    #     for idx, joint in enumerate(h1pp[0]):
+    #         rand_col = np.random.randint(0, 256, 3)
+    #         rand_col = tuple ([int(x) for x in rand_col])
+    #         IMGORIG = cv2.circle(IMGORIG, (int(joint[0]), int(joint[1])), 3, (255, 255, 0), 2)
+    #         IMGORIG = cv2.circle(IMGORIG, (int(vitpose_kpts[idx][0]), int(vitpose_kpts[idx][1])), 3, (255, 0, 0), 2)
+
+    #     imgs_out = []
+    #     for vidx, (verts, meshcol) in enumerate(zip(vertices_methods, colors)):
+    #         IMG = IMGORIG.copy()
+    #         renderer.update_camera_pose(
+    #             camera.pitch.item(), camera.yaw.item(), camera.roll.item(), 
+    #             camera.tx.item(), camera.ty.item(), camera.tz.item()
+    #         )
+    #         verts_hum = verts[0]
+    #         verts_obj = verts[1]
+    #         rendered_img = renderer.render(verts_hum, smplh_faces, verts_obj, obj_faces, colors=meshcol, body_model=body_model_type)
+    #         color_image = rendered_img[0].detach().cpu().numpy() * 255
+    #         overlay_image = overlay_images(IMGORIG.copy(), color_image)
+    #         image_out = np.hstack((IMG, overlay_image))
+
+    #         # now with different views
+    #         vertex_transl_center = verts_hum.mean((0,1))
+
+    #         verts_centered = verts_hum - vertex_transl_center
+    #         verts_centered_obj = verts_obj - vertex_transl_center
             
-            # y-axis rotation
-            for yy in [45.0, 90.0, 135.0]:
-                renderer_newview.update_camera_pose(0.0, yy, 180.0, 0.0, 0.2, 2.0)
-                rendered_img = renderer_newview.render(
-                    verts_centered,
-                    smplh_faces,
-                    verts_centered_obj,
-                    obj_faces,
-                    colors=meshcol,
-                    body_model=body_model_type)
-                color_image = rendered_img[0].detach().cpu().numpy() * 255
-                scale = image_out.shape[0] / color_image.shape[0]
-                newsize = (int(scale * color_image.shape[1]), int(image_out.shape[0]))
-                color_image = cv2.resize(color_image, dsize=newsize)
-                image_out = np.hstack((image_out, color_image))
+    #         # y-axis rotation
+    #         for yy in [45.0, 90.0, 135.0]:
+    #             renderer_newview.update_camera_pose(0.0, yy, 180.0, 0.0, 0.2, 2.0)
+    #             rendered_img = renderer_newview.render(
+    #                 verts_centered,
+    #                 smplh_faces,
+    #                 verts_centered_obj,
+    #                 obj_faces,
+    #                 colors=meshcol,
+    #                 body_model=body_model_type)
+    #             color_image = rendered_img[0].detach().cpu().numpy() * 255
+    #             scale = image_out.shape[0] / color_image.shape[0]
+    #             newsize = (int(scale * color_image.shape[1]), int(image_out.shape[0]))
+    #             color_image = cv2.resize(color_image, dsize=newsize)
+    #             image_out = np.hstack((image_out, color_image))
             
-            # bird view
-            for pp in [270.0]:
-                renderer_newview.update_camera_pose(pp, 0.0, 180.0, 0.0, 0.0, 2.0)
-                rendered_img = renderer_newview.render(
-                    verts_centered,
-                    smplh_faces,
-                    verts_centered_obj,
-                    obj_faces,
-                    colors=meshcol,
-                    body_model=body_model_type)
-                color_image = rendered_img[0].detach().cpu().numpy() * 255
-                scale = image_out.shape[0] / color_image.shape[0]
-                newsize = (int(scale * color_image.shape[1]), int(image_out.shape[0]))
-                color_image = cv2.resize(color_image, dsize=newsize)
-                image_out = np.hstack((image_out, color_image))
-            imgs_out.append(image_out)
+    #         # bird view
+    #         for pp in [270.0]:
+    #             renderer_newview.update_camera_pose(pp, 0.0, 180.0, 0.0, 0.0, 2.0)
+    #             rendered_img = renderer_newview.render(
+    #                 verts_centered,
+    #                 smplh_faces,
+    #                 verts_centered_obj,
+    #                 obj_faces,
+    #                 colors=meshcol,
+    #                 body_model=body_model_type)
+    #             color_image = rendered_img[0].detach().cpu().numpy() * 255
+    #             scale = image_out.shape[0] / color_image.shape[0]
+    #             newsize = (int(scale * color_image.shape[1]), int(image_out.shape[0]))
+    #             color_image = cv2.resize(color_image, dsize=newsize)
+    #             image_out = np.hstack((image_out, color_image))
+    #         imgs_out.append(image_out)
 
-        # image_out = np.vstack((imgs_out[0], imgs_out[1]))
-        image_out = imgs_out[0]
-        cv2.imwrite(out_fn_img, image_out[...,[2,1,0,3]][...,:3])
+    #     # image_out = np.vstack((imgs_out[0], imgs_out[1]))
+    #     image_out = imgs_out[0]
+    #     cv2.imwrite(out_fn_img, image_out[...,[2,1,0,3]][...,:3])
 
     
 if __name__ == "__main__":

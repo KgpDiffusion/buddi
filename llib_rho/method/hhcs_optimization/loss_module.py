@@ -162,7 +162,7 @@ class HHCOptiLoss(nn.Module):
                 self.diffusion_prior_body_weight
         return body_pose_loss
     
-    def get_diffusion_prior_pose_obj_loss(self, body_pose_diffused, body_pose_current):
+    def get_diffusion_prior_orient_obj_loss(self, body_pose_diffused, body_pose_current):
         body_pose_loss = self.diffusion_prior_body_crit(
             body_pose_diffused, body_pose_current) * \
                 self.diffusion_prior_body_weight
@@ -180,10 +180,10 @@ class HHCOptiLoss(nn.Module):
                 self.diffusion_prior_shape_weight
         return betas_loss
 
-    def get_diffusion_prior_transl_loss(self, transl_diffused, transl_current):
-        transl_loss = self.diffusion_prior_transl_crit(
+    def get_diffusion_prior_rel_transl_loss(self, transl_diffused, transl_current):
+        transl_loss = self.diffusion_prior_rel_transl_crit(
             transl_diffused, transl_current) * \
-                self.diffusion_prior_transl_weight
+                self.diffusion_prior_rel_transl_weight
         return transl_loss
     
     def get_interpenetration_loss(self,human_vertices:torch.Tensor, obj_vertices:torch.Tensor):
@@ -317,16 +317,16 @@ class HHCOptiLoss(nn.Module):
         if self.diffusion_prior_pose_weight > 0:
             ld['regularize_h0_pose'] = self.diffusion_prior_pose_weight * \
                     torch.norm(x_start_smpls[0].body_pose[[0]] - x_end_smpls.body_pose[[0]].detach())
-        if self.diffusion_prior_pose_obj_weight > 0:
-            ld['regularize_obj_pose'] = self.diffusion_prior_pose_obj_weight * \
+        if self.diffusion_prior_orient_obj_weight > 0:
+            ld['regularize_obj_pose'] = self.diffusion_prior_orient_obj_weight * \
                     torch.norm(obj_output.orient_obj - new_orient_obj.detach())
         
         # Regularize the relative translation of the two people
-        if self.diffusion_prior_transl_weight > 0:
+        if self.diffusion_prior_rel_transl_weight > 0:
             # t1 - t0 = t2 - t1
             diffusion_dist = new_transl_obj.detach() - x_end_smpls.transl[[0]].detach()
             curr_dist = obj_output.transl_obj - x_start_smpls[0].transl[[0]]
-            ld['regularize_h0_obj_transl'] = self.diffusion_prior_transl_weight * \
+            ld['regularize_h0_obj_transl'] = self.diffusion_prior_rel_transl_weight * \
                                                                 torch.norm(diffusion_dist - curr_dist)
 
         # Regularize the shape of the two people
@@ -349,7 +349,13 @@ class HHCOptiLoss(nn.Module):
         diffusion_loss = sum(ld_out.values())
         ld_out['total_sds_loss'] = diffusion_loss
 
-        return diffusion_loss, ld_out
+        out={}
+        out['one_step'] = {}
+        out['one_step']['smpl_output'] = x_end_smpls
+        out['one_step']['obj_output'] = {'orient_obj': new_orient_obj, 
+                                        'transl_obj': new_transl_obj}
+
+        return diffusion_loss, ld_out, out
 
 
     def forward_fitting(
@@ -472,7 +478,7 @@ class HHCOptiLoss(nn.Module):
 
         # diffusion prior loss / sds loss / BUDDI loss
         if use_diffusion_prior:
-            sds_loss, sds_ld_out = self.forward_diffusion(
+            sds_loss, sds_ld_out, vis_diffusion_out = self.forward_diffusion(
                 diffusion_module,
                 t,
                 smpl_output, 
@@ -492,4 +498,4 @@ class HHCOptiLoss(nn.Module):
         
         ld_out['total_loss'] = total_loss
 
-        return total_loss, ld_out
+        return total_loss, ld_out, vis_diffusion_out
