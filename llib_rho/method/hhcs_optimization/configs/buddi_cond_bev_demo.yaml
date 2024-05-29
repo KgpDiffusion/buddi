@@ -8,7 +8,7 @@ datasets:
   train_composition: [1.0]
   val_names: ['behave']
   behave:
-    data_folder: /home/shubhikg/data_intercap
+    data_folder: /home/shubhikg/intercap
     pseudogt_folder: gt
     bev_folder: bev_process
   augmentation:
@@ -49,6 +49,10 @@ model:
         squared: True
         d1_aggregation: 'none'
         weight: [200.0, 200.0]
+      obj_reproj2D: # 2D object reprojection loss
+        type: 'iou'
+        weighted: True
+        weight: [1000.0, 1000.0]
       diffusion_prior_orient: # sds loss
         type: 'l2'
         weight: [0.0, 0.0]

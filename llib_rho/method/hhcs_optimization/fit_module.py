@@ -53,13 +53,12 @@ class HHCSOpti(nn.Module):
     ):
         super(HHCSOpti, self).__init__()
 
-        # save config file
+        # Save config file
         self.opti_cfg = opti_cfg
         self.batch_size = batch_size
         self.device = device
         self.print_loss = opti_cfg.print_loss
         self.render_iters = opti_cfg.render_iters
-
         self.camera = camera
 
         self.male_body_model = body_model[0]
@@ -197,6 +196,68 @@ class HHCSOpti(nn.Module):
                     v = v.item()
                     out += f'{kprint}: {v:.4f} | '
         print(out)
+
+    def convert_colored_image_to_mask(self, image, 
+                                      lower_green=[40, 0,0], 
+                                      upper_green=[150, 255, 255]):
+        """ Convert colored image to mask.
+            Args:   
+                image (H,W,3): Colored image with object rendered in green
+            Returns:
+                mask: Mask of the object in the image"""
+        # DO HSV masking for green color
+        assert image.shape == (self.H, self.W, 3), f"Image shape is not correct {image.shape}"
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        lower_green = np.array(lower_green)
+        upper_green = np.array(upper_green)
+        mask = cv2.inRange(hsv, lower_green, upper_green)
+        mask = cv2.merge((mask, mask, mask))
+        # filter
+        kernel = np.ones((3,3), np.uint8)
+        mask = cv2.erode(mask, kernel, iterations=1)
+        mask = cv2.dilate(mask, kernel, iterations=1)
+        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+
+        assert mask.shape == (self.H, self.W), f"Mask shape is not correct {mask.shape}"
+        return mask
+    
+    def render_obj_mask(self, init_obj, item, 
+                            stage="", iter=None, 
+                            color=['light_blue3', 'light_blue5'],):
+        """Render the object binary mask"""
+
+        smpl_output = self.body_model()
+        obj_output= self.obj
+        obj_vertices_posed = init_obj['obj_vertices'] @ axis_angle_to_matrix(obj_output.orient_obj)[0].transpose(0, 1)  + obj_output.transl_obj[0]
+
+        device = smpl_output.vertices.device
+        verts_smpl = smpl_output.vertices
+        smplh_faces = torch.from_numpy(self.body_model.faces.astype(np.int32)).to(device)
+
+        body_model_type = type(self.body_model).__name__.lower().split('_')[0]
+        obj_faces = init_obj['obj_faces']
+
+        # create smpl model to get smpl faces
+        vertices_methods = [[verts_smpl, obj_vertices_posed.unsqueeze(0)]]
+        colors = [["light_blue1", "light_blue6"]]
+
+        imgs_out = []
+        for vidx, (verts, meshcol) in enumerate(zip(vertices_methods, colors)):
+            self.renderer.update_camera_pose(
+                self.camera.pitch.item(), self.camera.yaw.item(), self.camera.roll.item(), 
+                self.camera.tx.item(), self.camera.ty.item(), self.camera.tz.item()
+            )
+            verts_hum = verts[0]
+            verts_obj = verts[1]
+            rendered_img = self.renderer.render(verts_hum, smplh_faces, verts_obj, obj_faces, colors=meshcol, body_model=body_model_type)
+            color_image = rendered_img[0].detach().cpu().numpy() * 255
+            mask = self.convert_colored_image_to_mask(color_image)
+
+        assert mask.shape == (self.H, self.W), f"Mask shape is not correct {mask.shape}"
+
+        return mask
+        
 
     def render_current_estimate(self, init_obj, vis_out, item, 
                                 stage="", iter=None, color=['light_blue3', 'light_blue5'],
@@ -343,9 +404,19 @@ class HHCSOpti(nn.Module):
             else:
                 # without SDS loss, set t to None
                 t_i = None
+            
+            if item['use_mask_loss']>0:
+                print("Using mask loss")
+            else:
+                print("Not using mask loss")
+
+            if item['use_mask_loss']>0:
+                mask = self.render_obj_mask(init_obj, item, stage, i)
+                item['proj_obj_mask'] = mask
 
             # compute all loss
             loss, loss_dict, vis_out = self.criterion(
+                item,
                 smpl_output, 
                 obj_output, 
                 camera,
@@ -360,6 +431,7 @@ class HHCSOpti(nn.Module):
                 diffusion_module=self.diffusion_module,
                 t=t_i,
                 guidance_params=guidance_params,
+                use_mask_loss = item['use_mask_loss']
             )
 
             if self.print_loss:

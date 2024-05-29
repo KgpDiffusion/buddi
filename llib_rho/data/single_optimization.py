@@ -7,6 +7,7 @@ import os.path as osp
 from torch.utils.data import Dataset
 import numpy as np
 from llib_rho.data.preprocess.behave import Behave
+import cv2
 
 class SingleOptiDataset(Dataset):
 
@@ -45,6 +46,10 @@ class SingleOptiDataset(Dataset):
         self.dataset_cfg = dataset_cfg
         self.split = split
         self.init_method = 'bev' 
+
+        ## Mask loss params
+        self.std_filter_ratio=1.7
+        self.MIN_PIXEL_SIZE=100
 
         self.num_pose_params = 72
         self.num_shape_params = 10
@@ -111,6 +116,7 @@ class SingleOptiDataset(Dataset):
     def get_single_item(self, index):
 
         item = self.data[index]
+        obj_name = item['obj_name']
 
         img_height = item['img_height']
         img_width = item['img_width']
@@ -165,6 +171,17 @@ class SingleOptiDataset(Dataset):
             final_keypoints[lam,19,:] = op_keypoints[lam,19,:]
             final_keypoints[:, 1, :] = op_keypoints[:, 1, :]
             final_keypoints[:, 8, :] = op_keypoints[:, 8, :]
+
+        ## Compute binary label - 0 if mask loss is not used and 1 if mask loss is used
+        fileID= item['imgname'][:-4]
+        obj_mask_path = osp.join(self.dataset_cfg.data_folder, self.split,"masks", f"{fileID}_obj.png")
+        assert osp.exists(obj_mask_path), f"Mask path does not exist: {obj_mask_path}"
+        gt_obj_mask = cv2.imread(str(obj_mask_path), cv2.IMREAD_GRAYSCALE)
+        num_obj_pixels = np.sum(gt_obj_mask > 0)
+
+        use_mask_loss = num_obj_pixels >= item['stats'][self.split][obj_name]['mean'] - self.std_filter_ratio*item['stats'][self.split][obj_name]['std'] \
+                        and num_obj_pixels >= self.MIN_PIXEL_SIZE
+        
         human_obj_target = { 
             'global_orient': item[f'{self.init_method}_global_orient'],
             'body_pose': item[f'{self.init_method}_body_pose'],
@@ -181,7 +198,8 @@ class SingleOptiDataset(Dataset):
             'orient_obj': item[f'{self.init_method}_orient_obj'],
             'transl_obj': item[f'{self.init_method}_transl_obj'],
             'obj_vertices': self.mesh_vertices[item['obj_name']].astype(np.float32),
-            'obj_faces': self.mesh_faces[item['obj_name']].astype(np.float32)
+            'obj_faces': self.mesh_faces[item['obj_name']].astype(np.float32),
+            'use_mask_loss': use_mask_loss,
         }
 
         gt_human_obj_target = {
@@ -191,6 +209,7 @@ class SingleOptiDataset(Dataset):
             'gt_transl': item['pgt_transl'],
             'gt_orient_obj': item['pgt_orient_obj'],
             'gt_transl_obj': item['pgt_transl_obj'],
+            'gt_obj_mask': gt_obj_mask,
         }
                 
         target = {**gen_target, **cam_target, **human_obj_target, **gt_human_obj_target}

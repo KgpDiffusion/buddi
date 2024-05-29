@@ -48,7 +48,7 @@ class MaskLossStats(torch.nn.Module):
         # init call
         super(MaskLossStats, self).__init__()
 
-        self.data_dir = Path('/home/shubhikg/data/')
+        self.data_dir = Path('/home/shubhikg/data_intercap/')
         self.train_dir = self.data_dir / "train"
         self.val_dir = self.data_dir / "val"
         self.output_dir = self.data_dir / ".." / "buddi" / "debug_output"
@@ -59,9 +59,11 @@ class MaskLossStats(torch.nn.Module):
                                 'keyboard', 'plasticcontainer', 'stool', 'tablesquare', 'toolbox',
                                 'suitcase', 'tablesmall', 'yogamat', 'yogaball', 'trashbin']
         
+        self.object_names = ['obj01', 'obj02', 'obj03', 'obj04', 'obj05', 'obj06', 'obj07', 'obj08', 'obj09', 'obj10']
+        
         self.label_to_id = {name: i for i, name in enumerate(self.object_names)}
 
-        self.H, self.W = 1536, 2048
+        self.H, self.W = 1080, 1920 #1536, 2048
 
         self.cam_intrinsic = np.array([
                             [976.2120971679688, 0.0, 1017.9580078125],
@@ -150,7 +152,7 @@ class MaskLossStats(torch.nn.Module):
             plt.legend(loc='upper right')
             plt.title(f"Object: {object}")
             # save plot
-            plt.savefig(f"/home/shubhikg/exp/buddi/temp/{object}.png")
+            plt.savefig(f"/home/shubhikg/exp/buddi/temp/{object}_intercap.png")
 
         ## compute statistics
         for split in ['val','test']:
@@ -174,7 +176,7 @@ class MaskLossStats(torch.nn.Module):
                                                                 - 2*self.stats[split][object]['std']))/len(self.res[split][object])
         
         # Save stats in a json file
-        with open("/home/shubhikg/exp/buddi/temp/stats.json", "w") as f:
+        with open("/home/shubhikg/exp/buddi/temp/stats_intercap.json", "w") as f:
             import json
             json.dump(self.stats, f)
 

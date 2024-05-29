@@ -149,6 +149,11 @@ class HHCOptiLoss(nn.Module):
             init_transl, est_transl
             ) * self.init_transl_weight
         return init_transl_loss
+    
+    def get_obj_reproj2D_loss(self, pred_mask, gt_mask):
+        """ Compute the intersection over union between predicted and ground truth mask."""
+        IOU_loss = self.obj_reproj2D_crit(pred_mask, gt_mask) * self.obj_reproj2D_weight
+        return IOU_loss
 
     def get_diffusion_prior_orient_loss(self, global_orient_diffused, global_orient_current):
         global_orient_loss = self.diffusion_prior_global_crit(
@@ -360,6 +365,7 @@ class HHCOptiLoss(nn.Module):
 
     def forward_fitting(
         self, 
+        item,
         smpl_output, # the current estimate of person
         obj_output, # the current estimate of object
         camera, # camera
@@ -367,7 +373,8 @@ class HHCOptiLoss(nn.Module):
         #init_h2, # the initial estimate of person b (from BEV)
         init_human, # the initial estimate of person a and b 
         init_camera, # BEV camera
-        init_obj
+        init_obj,
+        use_mask_loss:bool = True
     ):
         bs, num_joints, _ = smpl_output.joints.shape  # B=1, N, 3
         device = smpl_output.joints.device
@@ -425,7 +432,13 @@ class HHCOptiLoss(nn.Module):
         ############
         ############
         ############
-        ## Filter it and only do it for large enough masks!
+        # Object reprojection loss
+        ld['obj_reproj2D_loss'] = 0.0
+        if self.obj_reproj2D_weight > 0 and use_mask_loss:
+            proj_mask = item['proj_obj_mask'].to(device)
+            gt_mask = item['gt_obj_mask'].to(device)
+            ld['obj_reproj2D_loss'] += self.get_obj_reproj2D_loss(
+                proj_mask, gt_mask)
         
         # average the losses over batch
         ld_out = {}
@@ -442,6 +455,7 @@ class HHCOptiLoss(nn.Module):
 
     def forward(
         self, 
+        item,
         smpl_output, 
         obj_output,
         camera,
@@ -456,6 +470,7 @@ class HHCOptiLoss(nn.Module):
         diffusion_module=None,
         t=None,
         guidance_params={},
+        use_mask_loss:bool = True
     ): 
         """
         Compute all losses in the current optimization iteration.
@@ -466,6 +481,7 @@ class HHCOptiLoss(nn.Module):
         
         # fitting losses (keypoints, pose / shape prior etc.)
         fitting_loss, fitting_ld_out = self.forward_fitting(
+            item,
             smpl_output, 
             obj_output,
             camera,
@@ -473,7 +489,8 @@ class HHCOptiLoss(nn.Module):
             #init_h2,
             init_human,
             init_camera,
-            init_obj
+            init_obj,
+            use_mask_loss
         )
 
         # diffusion prior loss / sds loss / BUDDI loss

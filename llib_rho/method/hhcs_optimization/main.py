@@ -214,7 +214,7 @@ def process_item(item_idx, cfg, item, logger, evaluator, diffusion_module, body_
         batch_size=cfg.batch_size,
         device=cfg.device,
         diffusion_module=diffusion_module,
-        renderer=renderer
+        renderer=renderer,
     )
 
 

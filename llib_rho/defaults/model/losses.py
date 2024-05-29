@@ -19,6 +19,11 @@ class L2Loss(Loss):
     weighted: bool = False
     d1_aggregation: str = "sum"
 
+@dataclass
+class IoULoss(Loss):
+    weighted: bool = False
+
+
 
 @dataclass
 class ContactLoss(Loss):
@@ -63,6 +68,7 @@ class Losses:
     init_pose: L2Loss = L2Loss(type="l2", squared=True)
     init_shape: L2Loss = L2Loss(type="l2", squared=True)
     init_transl: L2Loss = L2Loss(type="l2", squared=True)
+    obj_reproj2D: IoULoss = IoULoss(type="iou", weighted=True)
     kl: AnnealLoss = AnnealLoss(type="")
     pseudogt_pose: L2Loss = L2Loss(type="l2", squared=True)
     pseudogt_shape: L2Loss = L2Loss(type="l2", squared=True)

@@ -23,6 +23,22 @@ KEYPOINT_COST_TRHESHOLD = 0.008
 import torch
 import torch.nn as nn
 
+def get_object_names(dataset_name):
+
+    assert dataset_name in ['behave', 'intercap'], "Can only handle behave and intercap datasets."
+
+    if dataset_name == 'behave':
+
+        object_names = ['backpack', 'basketball', 'boxlarge', 'boxtiny', 'boxlong',
+                                'boxsmall', 'boxmedium', 'chairblack', 'chairwood', 'monitor',
+                                'keyboard', 'plasticcontainer', 'stool', 'tablesquare', 'toolbox',
+                                'suitcase', 'tablesmall', 'yogamat', 'yogaball', 'trashbin']
+    else:
+
+        object_names = ['obj01', 'obj02', 'obj03', 'obj04', 'obj05', 'obj06', 'obj07', 'obj08', 'obj09', 'obj10']
+
+    return object_names, {k: i+1 for i, k in enumerate(object_names)}
+
 class Behave():
     
     BEV_FOV = 60
@@ -57,6 +73,12 @@ class Behave():
         assert body_model_type in ['smpl', 'smplh', 'smplx'], "Can only handle smpl, smplh and smplx body model."
         self.body_model_type = body_model_type
 
+        # get basename from datafolder
+        self.dataset_name = osp.basename(data_folder)
+        assert self.dataset_name in ['behave', 'intercap'], "Can only handle behave and intercap datasets."
+
+        self.object_names, self.label2ID = get_object_names(self.dataset_name)
+
         self.image_folder = osp.join(self.data_folder, self.split, image_folder)
         self.cropped_image_folder = osp.join(self.data_folder, self.split, 'cropped_images')
         self.openpose_folder = osp.join(self.data_folder, self.split, openpose_folder)
@@ -66,6 +88,7 @@ class Behave():
         self.resnet_folder = osp.join(self.data_folder, self.split, resnet_folder)
         self.pseudogt_folder = osp.join(self.data_folder, self.split, pseudogt_folder)
         self.has_pseudogt = False if pseudogt_folder == '' else True
+        self.gt_stats_path = osp.join(self.data_folder, 'stats.json')
 
         self.num_verts = 10475 if self.body_model_type == 'smplx' else 6890
         self.shape_converter_smpl = ShapeConverter(inbm_type='smpl', outbm_type=self.body_model_type)
@@ -84,6 +107,12 @@ class Behave():
 
         meta_data_path = os.path.join(data_folder, split, 'metadata.pkl')
         self.meta_data = pickle.load(open(meta_data_path, 'rb'))
+
+        ## Load the stats for mask loss
+        self.stats = json.load(open(self.gt_stats_path, 'r'))
+        for obj_name in self.object_names:
+            print("Keys in stats: ", self.stats[self.split].keys())
+            assert obj_name in self.stats[self.split].keys(), f"Object {obj_name} not found in stats keys."
 
         self.obj_embeddings = {}
         obj_embeddings = np.load(os.path.join(data_folder, 'obj_embeddings.npy'), allow_pickle=True)
@@ -285,7 +314,10 @@ class Behave():
         else:
             op_data = json.load(open(openpose_path, 'r'))['people']
 
-        height, width = [1080, 1920] #[1536, 2048] # img.shape[:2]
+        if self.dataset_name == 'intercap':
+            height, width = [1080, 1920] #[1536, 2048] # img.shape[:2]
+        else :
+            height, width = [1536, 2048]
         # camera translation was already applied to mesh, so we can set it to zero.
         cam_transl = [0., 0., 0.] 
         # camera rotation needs 180 degree rotation around z axis, because bev and
@@ -376,6 +408,7 @@ class Behave():
                 'pgt_transl': gt_fits['trans'].astype(np.float32),
                 'pgt_orient_obj': np.expand_dims(gt_fits['obj_angle'], axis=0).astype(np.float32),  # 1, 3
                 'pgt_transl_obj': np.expand_dims(gt_fits['obj_trans'], axis=0).astype(np.float32),   # 1, 3
+                'stats': self.stats
             }
             image_data_template.update(pgt_data)
 

@@ -13,6 +13,9 @@ def build_loss(loss_cfg, body_model_type='smplx'):
     loss_type = loss_cfg.type
     if loss_type == 'l2':
         loss = L2Loss(**loss_cfg)
+    elif loss_type == 'iou':
+        from .iou_loss import IOULoss
+        loss = IOULoss(**loss_cfg)
     elif loss_type == '':
         loss = Placeholder()
     else:
