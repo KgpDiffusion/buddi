@@ -44,6 +44,7 @@ class HHCSOpti(nn.Module):
     def __init__(self,
                  opti_cfg,
                  camera,
+                 image_size,
                  body_model,
                  criterion,
                  batch_size=1,
@@ -56,6 +57,7 @@ class HHCSOpti(nn.Module):
         # Save config file
         self.opti_cfg = opti_cfg
         self.batch_size = batch_size
+        self.H, self. W = image_size
         self.device = device
         self.print_loss = opti_cfg.print_loss
         self.render_iters = opti_cfg.render_iters
@@ -107,9 +109,12 @@ class HHCSOpti(nn.Module):
             slope_tol=opti_cfg.hhcs.slope_tol,
         )
 
+        # initialize core renderer
+        self.renderer = renderer
+
         # rendered images per iter
         if self.render_iters:
-            self.renderer = renderer
+            
             self.renderer_newview = Pytorch3dRenderer(
             cameras = camera.cameras,
             image_width=200,
@@ -206,6 +211,7 @@ class HHCSOpti(nn.Module):
             Returns:
                 mask: Mask of the object in the image"""
         # DO HSV masking for green color
+        image = image[:,:,:3].astype(np.uint8)
         assert image.shape == (self.H, self.W, 3), f"Image shape is not correct {image.shape}"
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -226,6 +232,8 @@ class HHCSOpti(nn.Module):
                             stage="", iter=None, 
                             color=['light_blue3', 'light_blue5'],):
         """Render the object binary mask"""
+        imgname  = item['imgpath']
+        image = cv2.imread(imgname).astype(np.float32)
 
         smpl_output = self.body_model()
         obj_output= self.obj
@@ -240,10 +248,11 @@ class HHCSOpti(nn.Module):
 
         # create smpl model to get smpl faces
         vertices_methods = [[verts_smpl, obj_vertices_posed.unsqueeze(0)]]
-        colors = [["light_blue1", "light_blue6"]]
+        colors = [['light_blue1','light_green1']]
 
         imgs_out = []
         for vidx, (verts, meshcol) in enumerate(zip(vertices_methods, colors)):
+            # from IPython import embed; embed()
             self.renderer.update_camera_pose(
                 self.camera.pitch.item(), self.camera.yaw.item(), self.camera.roll.item(), 
                 self.camera.tx.item(), self.camera.ty.item(), self.camera.tz.item()
@@ -251,12 +260,21 @@ class HHCSOpti(nn.Module):
             verts_hum = verts[0]
             verts_obj = verts[1]
             rendered_img = self.renderer.render(verts_hum, smplh_faces, verts_obj, obj_faces, colors=meshcol, body_model=body_model_type)
-            color_image = rendered_img[0].detach().cpu().numpy() * 255
-            mask = self.convert_colored_image_to_mask(color_image)
+            self.color_image = rendered_img[0][...,:3] * 255.0
+            color_image_numpy = self.color_image.detach().cpu().numpy().astype(np.uint8)
+            self.mask_ = torch.Tensor(self.convert_colored_image_to_mask(color_image_numpy)).to(self.device)/255.0
+            self.color_image = torch.mean(self.color_image, dim=-1)/255.0
+            self.mask_.requires_grad = True
+            self.mask_.retain_grad()
+            self.color_image.retain_grad()
+            self.mask = self.color_image*(self.mask_)
 
-        assert mask.shape == (self.H, self.W), f"Mask shape is not correct {mask.shape}"
+        # self.mask[self.mask>0]=255.0 # binary self.mask
+        self.mask = 1 - torch.exp(-100*self.mask)
+        self.mask.retain_grad()
 
-        return mask
+        assert self.mask.shape == (self.H, self.W), f"Mask shape is not correct {self.mask.shape}"
+        return self.mask*255
         
 
     def render_current_estimate(self, init_obj, vis_out, item, 
@@ -264,7 +282,6 @@ class HHCSOpti(nn.Module):
                                 prefix = 'pred_opti'):
         """Render the current estimates"""
         if iter in self.save_at_steps:
-            
             with torch.no_grad():
                 if vis_out is not None:
                     smpl_output = vis_out['one_step']['smpl_output']
@@ -358,7 +375,80 @@ class HHCSOpti(nn.Module):
             image_out = imgs_out[0]
             joint_image = image_out[...,[2,1,0,3]][...,:3]
             self.renderings[stage][iter][str(prefix)] = joint_image
-          
+
+    def save_projected_objs(self, item, stage, i, prefix='proj_masks'):
+        """ Save the projected object masks to the image plane."""
+        proj_mask_pred = cv2.cvtColor((item['proj_obj_mask'].detach().cpu().numpy()).astype(np.uint8), cv2.COLOR_GRAY2RGB)
+        proj_mask_gt = cv2.cvtColor((item['gt_obj_mask'].detach().cpu().numpy()).astype(np.uint8), cv2.COLOR_GRAY2RGB)
+        proj_mask_pred[:,:,:2] = 0 # red
+        proj_mask_gt[:,:,1:] = 0 # blue
+        
+        # do alpha blending
+        out = cv2.addWeighted(proj_mask_pred, 0.5, proj_mask_gt, 0.5, 0)
+        # put Text
+        out = cv2.putText(out, f'Stage={stage}, i={i}', (150, 80), cv2.FONT_HERSHEY_SIMPLEX, 3, (255, 255, 255), 2, cv2.LINE_AA)
+        self.renderings[stage][i][str(prefix)] = out
+
+    def check_grad(self,):
+        """ check if grad is not None for useful params"""
+        
+        ## Object params
+        for name, param in self.obj.named_parameters():
+            if param.requires_grad:
+                if param.grad is not None:
+                    print(f'Object param {name} has grad = ', param.grad.sum())
+                else:
+                    print(f'Object param {name} has no grad')
+
+        ## Human params
+        # for name, param in self.body_model.named_parameters():
+        #     if param.requires_grad:
+        #         if param.grad is not None:
+        #             print(f'Human param {name} has grad = ', param.grad.sum())
+        #         else:
+        #             print(f'Human param {name} has no grad')
+
+        # color imag
+        if self.color_image.requires_grad:
+            if self.color_image.grad is not None:
+                print('Color image has grad= ', self.color_image.grad.sum())
+            else:
+                print('Color image has no grad')
+
+        # mask 
+        # if self.mask_.requires_grad:
+        #     if self.mask_.grad is not None:
+        #         print('Mask_ has grad= ', self.mask_.grad.sum())
+        #     else:
+        #         print('Mask_ has no grad')
+
+        # mask 
+        if self.mask.requires_grad:
+            if self.mask.grad is not None:
+                print('Mask  normal has grad= ', self.mask.grad.sum())
+            else:
+                print('Mask has no grad')
+
+        # # self.criterion.proj_mask
+        # if self.criterion.proj_mask.requires_grad:
+        #     if self.criterion.proj_mask.grad is not None:
+        #         print('Proj mask has grad= ', self.criterion.proj_mask.grad)
+        #     else:
+        #         print('Proj mask has no grad')
+
+        # # check self.criterion.IOU_loss
+        # if self.criterion.IOU_loss.requires_grad:
+        #     if self.criterion.IOU_loss.grad is not None:
+        #         print('IOU loss has grad= ', self.criterion.IOU_loss.grad)
+        #     else:
+        #         print('IOU loss has no grad')
+
+        # check self.criterion.est_joints
+        # if self.criterion.est_joints.requires_grad:
+        #     if self.criterion.est_joints.grad is not None:
+        #         print('Est joints has grad= ', self.criterion.est_joints.grad)
+        #     else:
+        #         print('Est joints has no grad')
 
     def optimize_params(
         self,
@@ -383,6 +473,12 @@ class HHCSOpti(nn.Module):
 
         for i in range(self.num_iters[stage]):
 
+            # initialize render output- False by default
+            if self.render_iters:
+                colors = {0: ['paper_blue', 'paper_red'], 1: ['paper_blue', 'paper_red']}
+                if i in self.save_at_steps:
+                    self.renderings[stage][i] = {}
+
             smpl_output = self.body_model()
             obj_output= self.obj
             camera = self.camera
@@ -405,13 +501,13 @@ class HHCSOpti(nn.Module):
                 # without SDS loss, set t to None
                 t_i = None
             
-            if item['use_mask_loss']>0:
-                print("Using mask loss")
-            else:
-                print("Not using mask loss")
+            # if item['use_mask_loss']>0:
+            #     print("Using mask loss")
+            # else:
+            #     print("Not using mask loss")
 
             if item['use_mask_loss']>0:
-                mask = self.render_obj_mask(init_obj, item, stage, i)
+                mask = self.render_obj_mask(init_obj, item, stage, i) 
                 item['proj_obj_mask'] = mask
 
             # compute all loss
@@ -438,19 +534,24 @@ class HHCSOpti(nn.Module):
                 self.print_losses(loss_dict, stage, i)
 
             # render iters is false by default
-            if self.render_iters:
-                colors = {0: ['paper_blue', 'paper_red'], 1: ['paper_blue', 'paper_red']}
-                if i in self.save_at_steps:
-                    self.renderings[stage][i] = {}
-                
-                self.render_current_estimate(init_obj,None, item,stage, i, colors[stage])
-                # render one step predictions
+            if self.render_iters and i in self.save_at_steps:
+                # save vis
+                if not item['use_mask_loss']>0:
+                    mask = self.render_obj_mask(init_obj, item, stage, i) 
+                    item['proj_obj_mask'] = mask
+
+                self.save_projected_objs(item, stage, i)                
+                self.render_current_estimate(init_obj, None, item, stage, i, colors[stage])
+                # # render one step predictions
                 self.render_current_estimate(init_obj,vis_out, item,stage, i, colors[stage], 
                                              prefix='one_step_pred')
 
             # optimizer step
             self.optimizer.zero_grad()
-            loss.backward()
+            if loss>0:
+                loss.backward()
+            # Check grad of relevant params
+            # self.check_grad()
             self.optimizer.step()
 
             # break if stopping criterion is met
@@ -587,7 +688,8 @@ class HHCSOpti(nn.Module):
             guru.info(f'Starting with stage: {stage} \n')
 
             ## Initialize smpl outputs, obj_outputs
-            self.renderings[stage] = dict()
+            if self.render_iters:
+                self.renderings[stage] = dict()
 
             self.stopper.reset() # stopping criterion
             self.setup_optimizer(init_human, init_camera,init_obj, stage) # setup optimizer
@@ -607,3 +709,4 @@ class HHCSOpti(nn.Module):
             obj_output = self.obj
 
         return smpl_output_h1, obj_output
+    

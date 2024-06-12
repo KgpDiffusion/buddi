@@ -65,10 +65,18 @@ class Behave():
         self.get_mesh = get_mesh
         # self.imgnames = os.listdir(os.path.join(data_folder, split, image_folder))
         self.imgnames = []
-        for img in os.listdir(os.path.join(data_folder, split, pseudogt_folder)):
+        for img in os.listdir(os.path.join(data_folder, split, image_folder)):
             img = img[:-4]
             self.imgnames.append(img + ".jpg")
         # self.imgnames = random.choices(self.imgnames, k=64)
+
+        CORE1_END = 1200
+        CORE2_END = 2400
+        CORE3_END = 3600
+        # self.imgnames = self.imgnames[:CORE1_END]
+        # self.imgnames = self.imgnames[CORE1_END:CORE2_END]
+        # self.imgnames = self.imgnames[CORE2_END:CORE3_END]
+        self.imgnames = self.imgnames[CORE3_END:]
 
         assert body_model_type in ['smpl', 'smplh', 'smplx'], "Can only handle smpl, smplh and smplx body model."
         self.body_model_type = body_model_type
@@ -395,7 +403,7 @@ class Behave():
 
         image_data_template.update(human_data)
 
-        if self.has_pseudogt:
+        if self.split != 'test' and self.has_pseudogt:
             gt_path = osp.join(self.pseudogt_folder, imgname[:-3] + 'pkl')
             gt_fits = pickle.load(
                 open(gt_path, 'rb'))
@@ -408,10 +416,10 @@ class Behave():
                 'pgt_transl': gt_fits['trans'].astype(np.float32),
                 'pgt_orient_obj': np.expand_dims(gt_fits['obj_angle'], axis=0).astype(np.float32),  # 1, 3
                 'pgt_transl_obj': np.expand_dims(gt_fits['obj_trans'], axis=0).astype(np.float32),   # 1, 3
-                'stats': self.stats
             }
             image_data_template.update(pgt_data)
 
+        image_data_template['stats'] = self.stats
         return image_data_template
 
     def load(self):

@@ -46,15 +46,28 @@ def build_optimization_datasets(datasets_cfg, body_model_cfg):
         dataset_name = datasets_cfg.val_names[0]
         dataset_cfg = eval(f'datasets_cfg.{dataset_name}')
         # create dataset
-        val_ds = SingleOptiDataset(
+        # val_ds = SingleOptiDataset(
+        #     dataset_cfg=dataset_cfg, 
+        #     dataset_name=dataset_name, 
+        #     image_processing=datasets_cfg.processing,
+        #     split='val',
+        #     body_model_type=body_model_type,
+        # )
+        val_ds = None
+
+    if len(datasets_cfg.test_names) == 1:
+        dataset_name = datasets_cfg.test_names[0]
+        dataset_cfg = eval(f'datasets_cfg.{dataset_name}')
+        # create dataset
+        test_ds = SingleOptiDataset(
             dataset_cfg=dataset_cfg, 
             dataset_name=dataset_name, 
             image_processing=datasets_cfg.processing,
-            split='val',
+            split='test',
             body_model_type=body_model_type,
         )
 
-    return train_ds, val_ds
+    return train_ds, val_ds, test_ds
 
 def build_datasets(
     datasets_cfg,

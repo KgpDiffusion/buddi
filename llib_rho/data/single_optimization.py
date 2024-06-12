@@ -90,6 +90,7 @@ class SingleOptiDataset(Dataset):
         return self.get_single_item(index)
 
     def load_data(self):
+        print("split", self.split)
         dataset, mesh_v, mesh_f = Behave(
                 **self.dataset_cfg, 
                 split=self.split,
@@ -203,12 +204,12 @@ class SingleOptiDataset(Dataset):
         }
 
         gt_human_obj_target = {
-            'gt_betas': item['pgt_betas'],
-            'gt_global_orient': item['pgt_global_orient'],
-            'gt_body_pose': item['pgt_body_pose'],
-            'gt_transl': item['pgt_transl'],
-            'gt_orient_obj': item['pgt_orient_obj'],
-            'gt_transl_obj': item['pgt_transl_obj'],
+            # 'gt_betas': item['pgt_betas'],
+            # 'gt_global_orient': item['pgt_global_orient'],
+            # 'gt_body_pose': item['pgt_body_pose'],
+            # 'gt_transl': item['pgt_transl'],
+            # 'gt_orient_obj': item['pgt_orient_obj'],
+            # 'gt_transl_obj': item['pgt_transl_obj'],
             'gt_obj_mask': gt_obj_mask,
         }
                 

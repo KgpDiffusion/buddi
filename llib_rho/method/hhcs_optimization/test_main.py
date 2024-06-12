@@ -178,14 +178,54 @@ def main(cfg, cmd_args):
         for k, v in evaluator.accumulator.items():
             guru.info(f'{k}: {v}')
 
+
+def save_to_json_file(save_dir:str, filename:str, smpl_output_h1, obj_output):
+    """ Save the smpl and object output to a json file.
+        Args:
+            save_dir: Directory to save the json file
+            filename: Name of the json file
+            smpl_output: SMPL output
+            obj_output: Object output
+    """
+
+    assert osp.exists(save_dir), f"Directory {save_dir} does not exist"
+
+    curr_res_dict = {}
+    img_id = filename.split('.')[0]
+    curr_res_dict[img_id] = {}
+    smpl_full_pose = torch.cat([smpl_output_h1.global_orient, smpl_output_h1.body_pose,
+                               smpl_output_h1.left_hand_pose,
+                               smpl_output_h1.right_hand_pose], dim=1)
+    smpl_betas = smpl_output_h1.betas
+    smpl_transl = smpl_output_h1.transl
+
+    obj_trans = obj_output.transl_obj
+    obj_rot = axis_angle_to_matrix(obj_output.orient_obj)
+
+    ## validate all shapes before saving
+    assert smpl_full_pose[0].shape == (156,), f"Shape of smpl_full_pose is not correct {smpl_full_pose[0].shape}"
+    assert smpl_betas[0].shape == (10,), f"Shape of smpl_betas is not correct {smpl_betas[0].shape}"
+    assert smpl_transl[0].shape == (3,), f"Shape of smpl_transl is not correct {smpl_transl[0].shape}"
+    assert obj_rot[0].shape == (3,3), f"Shape of obj_rot is not correct {obj_rot[0].shape}"
+    assert obj_trans[0].shape == (3,), f"Shape of obj_transl is not correct {obj_trans[0].shape}"
+
+    curr_res_dict[img_id]['pose'] = smpl_full_pose[0].detach().cpu().numpy().tolist()
+    curr_res_dict[img_id]['betas'] = smpl_betas[0].detach().cpu().numpy().tolist()
+    curr_res_dict[img_id]['trans'] = smpl_transl[0].detach().cpu().numpy().tolist()
+    curr_res_dict[img_id]['obj_rot'] = obj_rot[0].detach().cpu().numpy().tolist()
+    curr_res_dict[img_id]['obj_trans'] = obj_trans[0].detach().cpu().numpy().tolist()
+    
+
+    # dump in a json file
+    import json
+    with open(osp.join(save_dir, filename), 'w') as f:
+        json.dump(curr_res_dict, f)
+
+
 def process_item(item_idx, cfg, item, logger, evaluator, diffusion_module, body_model, camera):
 
     img_fn_out = item['imgname_fn_out']
     img_fn = item['imgname_fn']
-    out_fn_res = osp.join(logger.res_folder, f'{img_fn_out}.pkl')
-    out_fn_img = osp.join(logger.img_folder, f'{img_fn_out}.png')
-    out_fn_mp4 = osp.join(logger.sum_folder, f'{img_fn_out}.mp4')
-    out_fn_gif = osp.join(logger.sum_folder, f'{img_fn_out}.gif')
 
     # create vis directory for each filename
     vis_dir = osp.join(logger.img_folder, img_fn[:-4])
@@ -237,23 +277,6 @@ def process_item(item_idx, cfg, item, logger, evaluator, diffusion_module, body_
         else:
             pass
 
-    # get gt smpl.
-    if human_data['gender'][0, 0] == 1:
-        gt_smpl = diffusion_module.male_body_model(
-            global_orient=gt_data['gt_global_orient'],
-            body_pose=gt_data['gt_body_pose'],
-            betas=gt_data['gt_betas'],
-            transl=gt_data['gt_transl'],
-        )
-    else:
-        gt_smpl = diffusion_module.female_body_model(
-            global_orient=gt_data['gt_global_orient'],
-            body_pose=gt_data['gt_body_pose'],
-            betas=gt_data['gt_betas'],
-            transl=gt_data['gt_transl'],
-        )
-    gt_obj_vertices_posed = obj_data['obj_vertices'] @ axis_angle_to_matrix(gt_data['gt_orient_obj'])[0].transpose(0, 1)  + gt_data['gt_transl_obj'][0]
-
     # optimize each item in dataset
     smpl_output_h1, obj_output = optimization_module.fit(
         init_human=human_data,
@@ -262,22 +285,18 @@ def process_item(item_idx, cfg, item, logger, evaluator, diffusion_module, body_
         item=item,
     )
 
-    # guru.info(f'Optimization finished for {img_fn_out}. Saving results.')
+    ## save results
+    save_dir = osp.join(logger.res_folder, "jsons")
+    os.makedirs(save_dir, exist_ok=True)
+    filename = f"{img_fn[:-4]}.json"
 
-    obj_vertices_posed = obj_data['obj_vertices'] @ axis_angle_to_matrix(obj_output.orient_obj)[0].transpose(0, 1)  + obj_output.transl_obj[0]
-    verts_smpl = smpl_output_h1.vertices
-    if human_data['gender'][0, 0] == 1:
-        smplh_faces = torch.from_numpy(body_model[0].faces.astype(np.int32)).to(cfg.device)
-    else:
-        smplh_faces = torch.from_numpy(body_model[1].faces.astype(np.int32)).to(cfg.device)
-    body_model_type = type(body_model[0]).__name__.lower().split('_')[0]
-    obj_faces = obj_data['obj_faces']
+    save_to_json_file(save_dir, filename, smpl_output_h1, obj_output)
 
-    evaluator(
-        est_smpl=smpl_output_h1, tar_smpl=gt_smpl,
-        est_params=[obj_vertices_posed.detach()], tar_params=[gt_obj_vertices_posed], human_face=smplh_faces, object_face=[obj_faces],
-        t_type='final_cond'
-    )
+    # evaluator(
+    #     est_smpl=smpl_output_h1, tar_smpl=gt_smpl,
+    #     est_params=[obj_vertices_posed.detach()], tar_params=[gt_obj_vertices_posed], human_face=smplh_faces, object_face=[obj_faces],
+    #     t_type='final_cond'
+    # )
 
 
 
@@ -303,93 +322,7 @@ def process_item(item_idx, cfg, item, logger, evaluator, diffusion_module, body_
     #         out_fn_img = osp.join(vis_dir, f'{mode}.png')
     #         cv2.imwrite(out_fn_img, out)
     
-    # print optimized values
-    # print(f"Obj_output [Orient] for weight-> {opti_cfg.losses.diffusion_prior_rel_transl.weight}: ", obj_output.orient_obj)
-    # print(f"Obj_output [Transl] for weight-> {opti_cfg.losses.diffusion_prior_rel_transl.weight}: ", obj_output.transl_obj)
 
-    # if item_idx % 1 == 0 and item_idx < 150:
-    #     print(f"Saving image ->{out_fn_img}")
-    #     # visualize results
-    #     renderer_newview = Pytorch3dRenderer(
-    #         cameras = camera.cameras,
-    #         image_width=200,
-    #         image_height=300,
-    #     )
-    #     # create smpl model to get smpl faces
-        
-    #     vertices_methods = [[verts_smpl, obj_vertices_posed.unsqueeze(0)]]
-    #     colors = [["light_blue1", "light_blue6"]]
-    #     imgpath = item['imgpath']
-    #     orig_img = cv2.imread(imgpath)[:,:,::-1].copy().astype(np.float32)
-    #     IMG = add_alpha_channel(orig_img)
-        
-    #     # add keypoints to image
-    #     IMGORIG = IMG.copy()
-    #     h1pp = camera.project(smpl_output_h1.joints)
-    #     vitpose_kpts = item['keypoints'][0]
-        
-    #     for idx, joint in enumerate(h1pp[0]):
-    #         rand_col = np.random.randint(0, 256, 3)
-    #         rand_col = tuple ([int(x) for x in rand_col])
-    #         IMGORIG = cv2.circle(IMGORIG, (int(joint[0]), int(joint[1])), 3, (255, 255, 0), 2)
-    #         IMGORIG = cv2.circle(IMGORIG, (int(vitpose_kpts[idx][0]), int(vitpose_kpts[idx][1])), 3, (255, 0, 0), 2)
-
-    #     imgs_out = []
-    #     for vidx, (verts, meshcol) in enumerate(zip(vertices_methods, colors)):
-    #         IMG = IMGORIG.copy()
-    #         renderer.update_camera_pose(
-    #             camera.pitch.item(), camera.yaw.item(), camera.roll.item(), 
-    #             camera.tx.item(), camera.ty.item(), camera.tz.item()
-    #         )
-    #         verts_hum = verts[0]
-    #         verts_obj = verts[1]
-    #         rendered_img = renderer.render(verts_hum, smplh_faces, verts_obj, obj_faces, colors=meshcol, body_model=body_model_type)
-    #         color_image = rendered_img[0].detach().cpu().numpy() * 255
-    #         overlay_image = overlay_images(IMGORIG.copy(), color_image)
-    #         image_out = np.hstack((IMG, overlay_image))
-
-    #         # now with different views
-    #         vertex_transl_center = verts_hum.mean((0,1))
-
-    #         verts_centered = verts_hum - vertex_transl_center
-    #         verts_centered_obj = verts_obj - vertex_transl_center
-            
-    #         # y-axis rotation
-    #         for yy in [45.0, 90.0, 135.0]:
-    #             renderer_newview.update_camera_pose(0.0, yy, 180.0, 0.0, 0.2, 2.0)
-    #             rendered_img = renderer_newview.render(
-    #                 verts_centered,
-    #                 smplh_faces,
-    #                 verts_centered_obj,
-    #                 obj_faces,
-    #                 colors=meshcol,
-    #                 body_model=body_model_type)
-    #             color_image = rendered_img[0].detach().cpu().numpy() * 255
-    #             scale = image_out.shape[0] / color_image.shape[0]
-    #             newsize = (int(scale * color_image.shape[1]), int(image_out.shape[0]))
-    #             color_image = cv2.resize(color_image, dsize=newsize)
-    #             image_out = np.hstack((image_out, color_image))
-            
-    #         # bird view
-    #         for pp in [270.0]:
-    #             renderer_newview.update_camera_pose(pp, 0.0, 180.0, 0.0, 0.0, 2.0)
-    #             rendered_img = renderer_newview.render(
-    #                 verts_centered,
-    #                 smplh_faces,
-    #                 verts_centered_obj,
-    #                 obj_faces,
-    #                 colors=meshcol,
-    #                 body_model=body_model_type)
-    #             color_image = rendered_img[0].detach().cpu().numpy() * 255
-    #             scale = image_out.shape[0] / color_image.shape[0]
-    #             newsize = (int(scale * color_image.shape[1]), int(image_out.shape[0]))
-    #             color_image = cv2.resize(color_image, dsize=newsize)
-    #             image_out = np.hstack((image_out, color_image))
-    #         imgs_out.append(image_out)
-
-    #     # image_out = np.vstack((imgs_out[0], imgs_out[1]))
-    #     image_out = imgs_out[0]
-    #     cv2.imwrite(out_fn_img, image_out[...,[2,1,0,3]][...,:3])
 
     
 if __name__ == "__main__":

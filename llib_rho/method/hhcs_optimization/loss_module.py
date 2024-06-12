@@ -101,7 +101,7 @@ class HHCOptiLoss(nn.Module):
         xmax, ymax = valid_kpts.max(0)[0]
         bbox_size = max(ymax-ymin, xmax-xmin)
         gt_keypoints_vals = gt_keypoints_vals / bbox_size * 512
-        est_joints = est_joints / bbox_size * 512
+        self.est_joints = est_joints / bbox_size * 512
 
         # robistify keypoints
         #residual = (gt_keypoints_vals - projected_joints) ** 2
@@ -112,7 +112,7 @@ class HHCOptiLoss(nn.Module):
 
         # comput keypoint loss
         keypoint2d_loss = self.keypoint2d_crit(
-            gt_keypoints_vals, est_joints, gt_keypoints_conf
+            gt_keypoints_vals, self.est_joints, gt_keypoints_conf
         ) * self.keypoint2d_weight
 
         return keypoint2d_loss
@@ -152,8 +152,8 @@ class HHCOptiLoss(nn.Module):
     
     def get_obj_reproj2D_loss(self, pred_mask, gt_mask):
         """ Compute the intersection over union between predicted and ground truth mask."""
-        IOU_loss = self.obj_reproj2D_crit(pred_mask, gt_mask) * self.obj_reproj2D_weight
-        return IOU_loss
+        self.IOU_loss = self.obj_reproj2D_crit(pred_mask, gt_mask, weight=1) * self.obj_reproj2D_weight
+        return self.IOU_loss
 
     def get_diffusion_prior_orient_loss(self, global_orient_diffused, global_orient_current):
         global_orient_loss = self.diffusion_prior_global_crit(
@@ -190,17 +190,7 @@ class HHCOptiLoss(nn.Module):
             transl_diffused, transl_current) * \
                 self.diffusion_prior_rel_transl_weight
         return transl_loss
-    
-    def get_interpenetration_loss(self,human_vertices:torch.Tensor, obj_vertices:torch.Tensor):
-        """ Computes the interpenetration loss between the predicted human and object.
-            The object and human mesh vertices should be defined for the same frame of reference.
-            
-            ARGS:
-                human_vertices(torch.Tensor) - shape(bs,num_smpl_vertices,3)
-                obj_vertices(torch.Tensor) - shape(bs,1024,3)
-            RETURNS:
-                penetration_loss(torch.float64)
-            """
+
         
     def undo_orient_and_transl(self, diffusion_module, x_start_smpls, x_start_obj, target_rotation, target_transl, gender):
         """ 
@@ -433,13 +423,15 @@ class HHCOptiLoss(nn.Module):
         ############
         ############
         # Object reprojection loss
-        ld['obj_reproj2D_loss'] = 0.0
+        ld['obj_reproj2D_loss'] = torch.Tensor([0.0]).to(device)
         if self.obj_reproj2D_weight > 0 and use_mask_loss:
-            proj_mask = item['proj_obj_mask'].to(device)
+            self.proj_mask = item['proj_obj_mask'].to(device)
             gt_mask = item['gt_obj_mask'].to(device)
-            ld['obj_reproj2D_loss'] += self.get_obj_reproj2D_loss(
-                proj_mask, gt_mask)
-        
+            self.proj_mask = self.proj_mask / 255.0
+            gt_mask = gt_mask / 255.0
+            ld['obj_reproj2D_loss'] += torch.Tensor(self.get_obj_reproj2D_loss(
+                self.proj_mask, gt_mask))
+                            
         # average the losses over batch
         ld_out = {}
         for k, v in ld.items():
@@ -449,7 +441,6 @@ class HHCOptiLoss(nn.Module):
         # final loss value
         fitting_loss = sum(ld_out.values())
         ld_out['total_fitting_loss'] = fitting_loss
-
         return fitting_loss, ld_out
 
 
@@ -505,14 +496,14 @@ class HHCOptiLoss(nn.Module):
                 obj_embeddings,
             )
 
-        # update loss dict and sum up losses
+        # # update loss dict and sum up losses
         if use_diffusion_prior:
             total_loss = fitting_loss + sds_loss
             ld_out = {**fitting_ld_out, **sds_ld_out}
         else:
             total_loss = fitting_loss
             ld_out = fitting_ld_out
-        
+            
         ld_out['total_loss'] = total_loss
 
         return total_loss, ld_out, vis_diffusion_out
